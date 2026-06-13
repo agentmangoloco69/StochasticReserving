@@ -33,7 +33,7 @@ Also included are the following useful features:
 
 **Specific details for Python and R can be found in the README files in their respective folders.**
 
-*The code is provided as-is and may contain errors. Questions and reporting of issues are welcome but there is no active support and a response is not guaranteed.*
+*The code is provided as-is and may contain errors. Questions and reporting of issues to peter@emc-actuarial.com are welcome but there is no active support and a response is not guaranteed.*
 
 ## Example exhibits:
 

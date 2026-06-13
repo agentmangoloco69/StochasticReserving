@@ -1,0 +1,423 @@
+## On the lifetime and one-year views of reserve risk, with application to IFRS 17 and Solvency II risk margins.
+
+# R code to reproduce the tables in:
+
+# England, Verrall & Wüthrich (2018/2019). On the lifetime and one-year views of reserve risk, 
+# with application to IFRS 17 and Solvency II risk margins.
+# Insurance: Mathematics and Economics (2019) https://doi.org/10.1016/j.insmatheco.2018.12.002
+
+# Pre-print version available from SSRN (2018) https://ssrn.com/abstract=3141239
+
+# This code is provided by Peter England on behalf of EMC Actuarial and Analytics Ltd as an educational resource.
+
+# The paper brings together analytic and simulation-based approaches to reserve risk in general (P&C) insurance, 
+# applied to the traditional actuarial view of risk over the lifetime of the liabilities and 
+# to the one-year view of Solvency II. It also connects the lifetime and one-year views of risk. 
+# Predictive distributions are used to estimate risk margins under Solvency II and risk adjustments under IFRS 17.
+
+# The code supports Mack's model (as used in the paper), the Over-dispersed Poisson model,
+# and the Over-dispersed Negative Binomial model
+
+# Select which model to apply using the "method" variable below.
+
+# A commentary of the results is provided in the paper.
+
+
+## Set up libraries
+library(ggplot2)
+library(ChainLadder) # for Merz-Wuthrich analytic SD of CDR
+library(tidyverse) # for graphs
+library(ggfan) # for fan charts
+
+# Read in stochastic reserving functions
+source("StochResFunctions.R")
+
+# Read in data from csv file
+TA <- read.table("TandA.csv", sep=",")
+
+# Select triangle to work on
+Triangle <- TA
+
+# Look at data first
+# Incremental claims data:
+Inc_Triangle <- Incrementals(Triangle)
+print("Incremental Amounts")
+Inc_Triangle
+print("Cumulative Amounts")
+#Triangle <- Cumulatives(Inc_Triangle)
+Triangle
+
+# Incremental claims data:
+plotTriangleGraph(Inc_Triangle)
+
+# Cumulative claims data
+plotTriangleGraph(Triangle)
+
+# Set Mask for exclusion of link ratios (if required)
+Indicators <- matrix(1,nrow(Triangle)-1, ncol(Triangle)-1)
+#Indicators[3,6] <- 0
+
+## Show basic chain ladder results
+# Calculate link ratio triangle and volume-weighted chain ladder factors
+LRs <- LR_Tri(Triangle)
+CL_facs <- CL_factors(LRs$LRs, LRs$Weight)
+
+LRs$LRs
+CL_facs
+plotLRsGraph(LRs$LRs)
+
+# Calculate volume-weighted chain ladder results
+CL_Result <- Tri_forecast(Triangle, CL_facs)
+Latest_by_yr <- CL_Result$Latest
+TotalLatest <- sum(Latest_by_yr)
+Latest <- c(Latest_by_yr, TotalLatest)
+Reserves_by_yr <- CL_Result$Reserves
+TotalReserve <- CL_Result$TotalReserve
+Reserves <- c(Reserves_by_yr, TotalReserve)
+Ultimates_by_yr <- CL_Result$Ultimates
+TotalUltimate <- sum(Ultimates_by_yr)
+Ultimates <- c(Ultimates_by_yr, TotalUltimate)
+
+Table_0 <- cbind(round(Latest,0), round(Reserves,0), round(Ultimates,0))
+dimnames(Table_0) <- list(c(1:length(Triangle), "Total"), c("Latest", "Reserves", "Ultimates"))
+names(dimnames(Table_0)) <- c("Year","Chain Ladder Results")
+Table_0
+
+## 
+## MAIN RESULTS FROM THE PAPER:
+##
+
+## BOOTSTRAPPING
+##
+## Settings:
+## method = "Mack", "ODPConstant", "ODPNonConstant", "NegBinConstant", or "NegBinNonConstant"
+## (For ODP and NegBin, "NonConstant" is usually more appropriate)
+## replications = number of bootstrap replications
+## seed = seed point for random number generator (if blank, it is different each time)
+## BootstrapDist = "NP" for non-parametric, or "Gamma" or "Lognormal" for parametric (this is for the pseudo_data distribution)
+## ForecastDist = "NP" for non-parametric, or "Gamma" or "Lognormal" for parametric (this is for the process distribution)
+
+method <- "Mack" # Mack's method was used in the paper
+#method <- "ODPConstant"
+#method <- "ODPNonConstant"
+#method <- "NegBinConstant"
+#method <- "NegBinNonConstant"
+
+BootstrapDist = "NP" # non-parametric bootstrapping
+#BootstrapDist = "Gamma" # generating pseudo-data with Gamma distribution
+#BootstrapDist = "Lognormal" # generating pseudo-data with Lognormal distribution
+
+#ForecastDist <- "NP" # non-parametric forecasting
+ForecastDist <- "Gamma" # forecasting with Gamma distribution
+#ForecastDist <- "Lognormal" # forecasting with Lognormal distribution
+
+replications <- 10000
+seed <- 100 # seed point for bootstrapping
+#seed <- 321
+
+## LIFETIME VIEW - Bootstrapping
+# Set user-defined sqrtScale (sigmas for Mack's model) if required
+# This can be used to control variability at the forecasting stage
+# (Not required to reproduce methods used in the paper)
+UserSqrtScale <- NULL
+
+Bstrap_Result <- Run_Bootstrap(Triangle, Mask=Indicators, method=method, 
+                               replications=replications, seed=seed, BootstrapDist=BootstrapDist, 
+                               ForecastDist=ForecastDist, UserSqrtScale=UserSqrtScale)
+
+# Show set of summary statistics from bootstrap results
+ShowStats <- ShowSummaryStats(Bstrap_Result, Output="Reserves")
+ShowStats <- ShowSummaryStats(Bstrap_Result, Output="Ultimates")
+
+# Residuals graphs associated with bootstrap method
+#plotResiduals(Bstrap_Result$Resids, resid_type="adjunscaledresids", bstrap_method=method)
+plotResiduals(Bstrap_Result$Resids, resid_type="zeroavgscaledresids", bstrap_method=method)
+
+# Histograms - Undiscounted reserves
+plotHistogram_Total(Bstrap_Result$TotalReserve)
+#plotHistogram_by_yr(Bstrap_Result$Reserves)
+
+# Development graphs
+BStrap_Cumulatives <- Bstrap_Result$Cumulatives
+for (yr in seq(2, ncol(BStrap_Cumulatives), by = 2)) {
+  print(plotDevelopmentGraph(BStrap_Cumulatives,yr))
+}
+
+
+##
+## CREATE EXHIBITS
+##
+
+# Table 1 - Chain ladder factors and sqrtScale  / Mack's alpha parameters
+if (method %in% c("Mack", "NegBinConstant", "NegBinNonConstant")) {
+  params_by_DevPeriod <- rbind(round(c(Bstrap_Result$CL_facs,1),3), round(c(Bstrap_Result$Resids$sqrtScale, NA),1))
+} else {
+  params_by_DevPeriod <- rbind(round(c(Bstrap_Result$CL_facs,1),3), round(Bstrap_Result$Resids$sqrtScale,1))
+}
+dp_labels <- paste("DP", 1:length(Triangle), sep=" ")
+dimnames(params_by_DevPeriod) <- list(c("Dev Factors", "sqrtScale"), dp_labels)
+cat("Development factors and sqrtScale parameters\n")
+params_by_DevPeriod
+
+
+# Table 2 - Analytic results for chain ladder model
+Analytic_RMSEPs <- Calc_RMSEPs(Triangle, method, Mask=Indicators)
+CL_Res <- Analytic_RMSEPs$CL_Res
+CL_Res_SD <- Analytic_RMSEPs$Res_SD
+CL_Res_CoV <- safe_divide(CL_Res_SD, CL_Res)
+CL_CDR_SD_1Yr <- Analytic_RMSEPs$CDR_SD_1Yr
+CL_CDR_Ratio <- safe_divide(CL_CDR_SD_1Yr, abs(CL_Res))
+Table_2 <- cbind(round(CL_Res), round(CL_Res_SD), round(100*CL_Res_CoV,1),round(CL_CDR_SD_1Yr), round(100*CL_CDR_Ratio,1))
+dimnames(Table_2) <- list(c(1:length(Triangle), "Total"), c("CL Reserves", "Reserve SD", "Reserve CoV %", "CDR SD", "CDR SD Ratio %"))
+names(dimnames(Table_2)) <- c("Year","Analytic")
+Table_2
+
+
+# Table 3
+# Analytic results for chain ladder model
+# For Mack's assumptions, use Merz-Wuthrich (2014) The Full Picture, and the ChainLadder package
+Table_3 <- round(Analytic_RMSEPs$CDR_SD)
+if (method!="Mack") {message("Analytic CDR RMSEPs not available for ODP or NegBin models")}
+Table_3
+
+
+#Table 4 - Simulation results summary
+## ONE-YEAR VIEW AND BEYOND - Re-reserving using "Actuary-in-the-box"
+CDR_Result <- CDR_Full_Picture(Triangle, Bstrap_Result$Cumulatives, VAR_p=0.995, Mask=Indicators)
+
+Table_4 <- cbind(round(Bstrap_Result$Avg_Reserve), round(Bstrap_Result$SD_Reserve), round(100*Bstrap_Result$CoV_Reserve,1), 
+                 round(CDR_Result$SD_CDR[1,]), round(100*safe_divide(CDR_Result$SD_CDR[1,], Bstrap_Result$Avg_Reserve),1))
+Table_4_Totals <- cbind(round(Bstrap_Result$Avg_TotalReserve), round(Bstrap_Result$SD_TotalReserve), round(100*Bstrap_Result$CoV_TotalReserve,1), 
+                        round(CDR_Result$SD_TotalCDR[1]), round(100*safe_divide(CDR_Result$SD_TotalCDR[1], Bstrap_Result$Avg_TotalReserve,1)))
+Table_4 <- rbind(Table_4, Table_4_Totals)
+dimnames(Table_4) <- list(c(1:length(Triangle), "Total"), c("Avg Reserves", "Bstrap SD", "Bstrap CoV %", "CDR SD", "CDR SD Ratio %"))
+names(dimnames(Table_4)) <- c("Year","Simulated (Undiscounted)")
+Table_4
+
+
+# Table 5 - Discounted Results
+disc_rate <- 0.03 # discount rate
+offset <- 0.5 # assume payments are made half-way through the year
+Bstrap_Result_Disc_Res <- Bstrap_Disc_Reserves(Bstrap_Result$Cumulatives, disc_rate, offset)
+Table_5 <- cbind(round(Bstrap_Result_Disc_Res$Avg_Disc_Res), round(Bstrap_Result_Disc_Res$SD_Disc_Res), round(100*Bstrap_Result_Disc_Res$CoV_Disc_Res,1))
+Table_5_Totals <- cbind(round(Bstrap_Result_Disc_Res$Avg_Disc_TotalRes), round(Bstrap_Result_Disc_Res$SD_Disc_TotalRes), round(100*Bstrap_Result_Disc_Res$Cov_Disc_TotalRes,1))
+Table_5 <- rbind(Table_5, Table_5_Totals)
+dimnames(Table_5) <- list(c(1:length(Triangle), "Total"), c("Avg Reserves", "Bstrap SD", "Bstrap CoV %"))
+names(dimnames(Table_5)) <- c("Year","Simulated (Undiscounted)")
+Table_5
+
+# Show set of summary statistics from bootstrap results
+ShowStats <- ShowSummaryStats(Bstrap_Result_Disc_Res, Output="Reserves")
+
+# Histograms - Discounted reserves
+plotHistogram_Total(Bstrap_Result_Disc_Res$TotalReserve)
+#plotHistogram_by_yr(Bstrap_Result_Disc_Res$Reserves)
+
+
+#Table 6 - SDs of simulated CDRs for each future year
+Table_6 <- t(CDR_Result$SD_CDR)
+Table_6 <- rbind(Table_6,CDR_Result$SD_TotalCDR)
+Table_6_SS <- Table_6 * Table_6
+Table_6_SS <- sqrt(apply(Table_6_SS, 1,sum))
+Table_6 <- cbind(round(Table_6), round(Table_6_SS))
+dimnames(Table_6) <- list(c(1:length(Triangle), "Total"), c(1:(length(Triangle)-1), "Sqrt SS"))
+names(dimnames(Table_6)) <- c("Year","SD(CDR) by Future Year")
+Table_6
+
+
+#Table 7 - VaR@99.5% of simulated CDRs for each future year
+Table_7 <- t(CDR_Result$CDR_VAR)
+Table_7 <- rbind(round(Table_7),round(CDR_Result$TotalCDR_VAR))
+dimnames(Table_7) <- list(c(1:length(Triangle), "Total"), c(1:(length(Triangle)-1)))
+names(dimnames(Table_7)) <- c("Year","VAR(CDR) @ 99.5% by Future Year")
+Table_7
+
+
+# 
+# Solvency II Cost-of-Capital Risk Margins
+#
+# All costs-of-Capital assumed to be in arrears and discounted a full year.
+# (ie Offset=1 in CoC_RM function). Check Solvency II documentation.
+#
+
+#Table 8 - Cost-of-Capital Risk Margin
+#RM_Initial_Capital <- 4867412 # the value used in the paper
+CoC_rate <- 0.06
+# Set initial capital
+RM_Initial_Capital <- CDR_Result$TotalCDR_VAR[1]
+# Caluclate discounted reserves at each future year (discounted back to that year)
+Disc_Fut_Res <- Disc_Future_Reserves(Incrementals(Bstrap_Result$CL_Cumulatives), disc_rate, offset)
+# Obtain "Capital Profile"
+Disc_BE_Profile <- Capital_Profile(Disc_Fut_Res)
+# Calculate cost-of-capital risk margin
+Disc_RM_BE <- CoC_RM(RM_Initial_Capital, Disc_BE_Profile, CoC_rate, disc_rate, 1)
+
+Table_8 <- cbind(round(Disc_Fut_Res), round(Disc_RM_BE$Capital), round(100*Disc_BE_Profile,1), round(Disc_RM_BE$CoC), round(Disc_RM_BE$Disc_CoC))
+BE_basis_RM <- round(Disc_RM_BE$RM)
+dimnames(Table_8) <- list(c(0:(length(Triangle)-2)), c("Disc Fut Res","Capital","Capital Profile %", "Cost of Capital", "Disc CoC"))
+names(dimnames(Table_8)) <- c("Future Year","")
+Table_8
+names(BE_basis_RM) <- "Risk Margin (Best Estimate Basis)"
+BE_basis_RM
+
+
+# Table 9 - Risk Margins under different bases
+CDR_SD_Profile <- Capital_Profile(CDR_Result$SD_TotalCDR)
+CDR_VAR_Profile <- Capital_Profile(CDR_Result$TotalCDR_VAR)
+Disc_RM_SD <- CoC_RM(RM_Initial_Capital, CDR_SD_Profile, CoC_rate, disc_rate, 1)
+Disc_RM_VAR <- CoC_RM(RM_Initial_Capital, CDR_VAR_Profile, CoC_rate, disc_rate, 1)
+Table_9_RMs <- cbind(round(Disc_RM_BE$RM), round(Disc_RM_SD$RM), round(Disc_RM_VAR$RM))
+Table_9 <- cbind(round(Disc_RM_BE$Capital), round(Disc_RM_SD$Capital), round(Disc_RM_VAR$Capital))
+Table_9 <- rbind(Table_9, Table_9_RMs)
+dimnames(Table_9) <- list(c(0:(length(Triangle)-2),"Risk Margin"), c("Best Estimate","CDR SD","CDR VaR @ 99.5%"))
+names(dimnames(Table_9)) <- c("Future Year","Risk Margins under different bases")
+Table_9
+
+# 
+# IFRS 17 Risk Adjustments
+#
+
+#Table 10 - Risk adjustments using risk measures applied to distribution of discounted reserves
+VAR_level <- 0.75
+TVAR_level <- 0.4
+PHT_param <- 1.85
+
+DiscTotalReserve_VAR <- -VAR(-Bstrap_Result_Disc_Res$TotalReserve, (1-VAR_level))
+DiscTotalReserve_TVAR <- TVAR(Bstrap_Result_Disc_Res$TotalReserve, TVAR_level)
+DiscTotalReserve_PHT <- PHT(Bstrap_Result_Disc_Res$TotalReserve, PHT_param)
+DiscTotalReserve_VAR_RM <- DiscTotalReserve_VAR - Bstrap_Result_Disc_Res$Avg_Disc_TotalRes
+DiscTotalReserve_TVAR_RM <- DiscTotalReserve_TVAR - Bstrap_Result_Disc_Res$Avg_Disc_TotalRes
+DiscTotalReserve_PHT_RM <- DiscTotalReserve_PHT - Bstrap_Result_Disc_Res$Avg_Disc_TotalRes
+DiscTotalReserve_VAR_RM_ratio <- DiscTotalReserve_VAR_RM/Bstrap_Result_Disc_Res$Avg_Disc_TotalRes
+DiscTotalReserve_TVAR_RM_ratio <- DiscTotalReserve_TVAR_RM/Bstrap_Result_Disc_Res$Avg_Disc_TotalRes
+DiscTotalReserve_PHT_RM_ratio <- DiscTotalReserve_PHT_RM/Bstrap_Result_Disc_Res$Avg_Disc_TotalRes
+Table_10_R1 <- cbind(round(100*VAR_level), round(100*TVAR_level), round(100*PHT_param))
+Table_10_R2 <- cbind(round(DiscTotalReserve_VAR_RM), round(DiscTotalReserve_TVAR_RM), round(DiscTotalReserve_PHT_RM))
+Table_10_R3 <- cbind(round(Bstrap_Result_Disc_Res$Avg_Disc_TotalRes), round(Bstrap_Result_Disc_Res$Avg_Disc_TotalRes), round(Bstrap_Result_Disc_Res$Avg_Disc_TotalRes))
+Table_10_R4 <- cbind(round(DiscTotalReserve_VAR), round(DiscTotalReserve_TVAR), round(DiscTotalReserve_PHT))
+Table_10_R5 <- cbind(round(100*DiscTotalReserve_VAR_RM_ratio,1), round(100*DiscTotalReserve_TVAR_RM_ratio,1), round(100*DiscTotalReserve_PHT_RM_ratio,1))
+Table_10 <- rbind(Table_10_R1, Table_10_R2, Table_10_R3, Table_10_R4, Table_10_R5)
+dimnames(Table_10) <- list(c("Risk tolerance %", "Risk adjustment", "Best estimate (disc)", "Total", "Risk adjustment %"),
+                           c("Value at Risk", "Tail Value at Risk","Prop. Hazards Transform"))
+Table_10
+
+
+#Table 11 - Equivalent risk tolerance levels to give risk adjustment = Cost-of-Capital risk margin
+RM <- BE_basis_RM
+RM_ratio <- RM/Disc_Fut_Res[1]
+AvgDiscTotalRes <- Bstrap_Result_Disc_Res$Avg_Disc_TotalRes
+# Search for VAR, TVAR and PHT risk tolerance levels
+target <- RM
+VAR_level <- uniroot(function(p) -VAR(-Bstrap_Result_Disc_Res$TotalReserve,(1-p)) -
+                       AvgDiscTotalRes - target, c(0.000001,1))
+TVAR_level <- uniroot(function(p) TVAR(Bstrap_Result_Disc_Res$TotalReserve,p) - 
+                        AvgDiscTotalRes - target, c(0,0.999999))
+PHT_level <- uniroot(function(p) PHT(Bstrap_Result_Disc_Res$TotalReserve,p) - 
+                       AvgDiscTotalRes -target, c(1,1000))
+
+DiscTotalReserve_VAR <- -VAR(-Bstrap_Result_Disc_Res$TotalReserve, (1-VAR_level$root))
+DiscTotalReserve_TVAR <- TVAR(Bstrap_Result_Disc_Res$TotalReserve, TVAR_level$root)
+DiscTotalReserve_PHT <- PHT(Bstrap_Result_Disc_Res$TotalReserve, PHT_level$root)
+DiscTotalReserve_VAR_RM <- DiscTotalReserve_VAR - AvgDiscTotalRes
+DiscTotalReserve_TVAR_RM <- DiscTotalReserve_TVAR - AvgDiscTotalRes
+DiscTotalReserve_PHT_RM <- DiscTotalReserve_PHT - AvgDiscTotalRes
+DiscTotalReserve_VAR_RM_ratio <- DiscTotalReserve_VAR_RM/AvgDiscTotalRes
+DiscTotalReserve_TVAR_RM_ratio <- DiscTotalReserve_TVAR_RM/AvgDiscTotalRes
+DiscTotalReserve_PHT_RM_ratio <- DiscTotalReserve_PHT_RM/AvgDiscTotalRes
+
+Table_11_R1 <- c(NA, sprintf("%1.2f%%", 100*VAR_level$root), sprintf("%1.2f%%", 100*TVAR_level$root),
+                 sprintf("%1.0f%%",round(100*PHT_level$root)))
+Table_11_R2 <- c(RM, DiscTotalReserve_VAR_RM, DiscTotalReserve_TVAR_RM, DiscTotalReserve_PHT_RM)
+Table_11_R3 <- c(Disc_Fut_Res[1], rep(AvgDiscTotalRes, 3))
+Table_11_R4 <- c((Disc_Fut_Res[1] + RM), DiscTotalReserve_VAR, DiscTotalReserve_TVAR, DiscTotalReserve_PHT)
+Table_11_R5 <- c(RM_ratio, DiscTotalReserve_VAR_RM_ratio, DiscTotalReserve_TVAR_RM_ratio, DiscTotalReserve_PHT_RM_ratio)
+Table_11 <- rbind(Table_11_R1, format(round(Table_11_R2), big.mark=","), format(round(Table_11_R3), big.mark=","), 
+                  format(round(Table_11_R4), big.mark=","), sprintf("%1.2f%%", 100*Table_11_R5))
+dimnames(Table_11) <- list(c("Risk tolerance", "Risk adjustment", "Best estimate (disc)", "Total", "Risk adjustment %"),
+                           c("Cost-of-Capital", "Value at Risk", "Tail Value at Risk","Prop. Hazards Transform"))
+Table_11
+
+# 
+# Alternative bases for Solvency II Cost-of-Capital Risk Margins
+#
+
+# Table 12 - Mean, SD and VaR of the discounted reserves (and SD of the undiscounted reserves) with CoC risk margins
+Bstrap_Result_Disc <- Bstrap_Disc_Future_Reserves(Bstrap_Result$Cumulatives, disc_rate, offset)
+Bstrap_Result_UnDisc <- Bstrap_Disc_Future_Reserves(Bstrap_Result$Cumulatives, 0, 0)
+# Capital using VaR @ target and 99.5 percentile levels:
+target1 <- CDR_Result$TotalCDR_VAR[1]
+VAR_level_res <- uniroot(function(p) -VAR(-Bstrap_Result_Disc_Res$TotalReserve,(1-p)) -
+                           Bstrap_Result_Disc_Res$Avg_Disc_TotalRes - target1, c(0.000001,1))
+Disc_FutRes_VAR_root <- -apply(-Bstrap_Result_Disc$FutureReserves,2,VAR, p=(1-VAR_level_res$root)) - Bstrap_Result_Disc$Avg_Disc_Fut_Res
+Disc_FutRes_VAR_995 <- -apply(-Bstrap_Result_Disc$FutureReserves,2,VAR, p=(1-0.995)) - Bstrap_Result_Disc$Avg_Disc_Fut_Res
+
+#
+RM_Initial_Capital_T12 <- Disc_FutRes_VAR_root[1]
+Disc_AvgRes_RM <- CoC_RM(RM_Initial_Capital_T12, Capital_Profile(Bstrap_Result_Disc$Avg_Disc_Fut_Res), CoC_rate, disc_rate, 1)$RM
+Disc_SDReS_RM <- CoC_RM(RM_Initial_Capital_T12, Capital_Profile(Bstrap_Result_Disc$SD_Disc_Fut_Res), CoC_rate, disc_rate, 1)$RM
+UnDisc_SDReS_RM <- CoC_RM(RM_Initial_Capital_T12, Capital_Profile(Bstrap_Result_UnDisc$SD_Disc_Fut_Res), CoC_rate, disc_rate, 1)$RM
+Disc_VARRes_RM_root <- CoC_RM(RM_Initial_Capital_T12, Capital_Profile(Disc_FutRes_VAR_root), CoC_rate, disc_rate, 1)$RM
+# Using VaR@99.5% of discounted future reserves for initial capital and capital profile
+Disc_VARRes_RM_995 <- CoC_RM(Disc_FutRes_VAR_995[1], Capital_Profile(Disc_FutRes_VAR_995), CoC_rate, disc_rate, 1)$RM
+
+Table_12 <- cbind(round(Bstrap_Result_Disc$Avg_Disc_Fut_Res),round(Bstrap_Result_Disc$SD_Disc_Fut_Res),round(Bstrap_Result_UnDisc$SD_Disc_Fut_Res), round(Disc_FutRes_VAR_root),round(Disc_FutRes_VAR_995))
+Table_12_RMs <- cbind(round(Disc_AvgRes_RM), round(Disc_SDReS_RM), round(UnDisc_SDReS_RM), round(Disc_VARRes_RM_root), round(Disc_VARRes_RM_995))
+Table_12 <- rbind(Table_12, Table_12_RMs)
+dimnames(Table_12) <- list(c(0:(length(Triangle)-2),"Risk Adjustment"),
+        c("Avg(Disc Res)","SD(Disc Res)","SD(Undisc Res)",
+          paste0("VaR(Disc Res)@", round(100*VAR_level_res$root,1), "%"), "VaR(Disc Res)@99.5%"))
+names(dimnames(Table_12)) <- c("Future Year","Mean, SD, VaR of reserves with CoC risk adjustments")
+Table_12
+
+
+# Table 13 CoC risk margins based on reverse sum of CDRs
+c1 <- Table_3[nrow(Table_3),2:(ncol(Table_3)-2)]
+c1 <- as.vector(c1, "numeric")
+CDRRevSum_SD_MW <- rev(sqrt(cumsum(rev(c1*c1))))
+
+CDRRevSum <- CDR_Rev_Sum(CDR_Result$TotalCDR)
+CDRRevSum_SD <- CDRRevSum$SD_RevSum_CDR
+
+target2 <- CDR_Result$TotalCDR_VAR[1]
+VAR_level_cdr <- uniroot(function(p) -VAR(CDRRevSum$RevSum_CDR[1,], (1-p)) + CDRRevSum$Avg_RevSum_CDR[1]
+                         - target2, c(0.000001 ,1))
+CDRRevSum_VAR_root <- -apply(CDRRevSum$RevSum_CDR,1,VAR, p=(1-VAR_level_cdr$root)) + CDRRevSum$Avg_RevSum_CDR
+CDRRevSum_VAR_995 <- -apply(CDRRevSum$RevSum_CDR,1,VAR, p=(1-0.995)) + CDRRevSum$Avg_RevSum_CDR 
+#
+RM_Initial_Capital_T13 <- CDRRevSum_VAR_root[1]
+CDRRevSum_SD_MW_RM <- CoC_RM(RM_Initial_Capital_T13, Capital_Profile(CDRRevSum_SD_MW), CoC_rate, disc_rate, 1)$RM
+CDRRevSum_SD_RM <- CoC_RM(RM_Initial_Capital_T13, Capital_Profile(CDRRevSum_SD), CoC_rate, disc_rate, 1)$RM
+CDRRevSum_VAR_RM_root <- CoC_RM(RM_Initial_Capital_T13, Capital_Profile(CDRRevSum_VAR_root), CoC_rate, disc_rate, 1)$RM
+CDRRevSum_VAR_RM_995 <- CoC_RM(CDRRevSum_VAR_995[1], Capital_Profile(CDRRevSum_VAR_995), CoC_rate, disc_rate, 1)$RM
+
+Table_13 <- cbind(round(CDRRevSum_SD_MW), round(CDRRevSum_SD), round(CDRRevSum_VAR_root), round(CDRRevSum_VAR_995))
+Table_13_RMs <- cbind(round(CDRRevSum_SD_MW_RM), round(CDRRevSum_SD_RM), round(CDRRevSum_VAR_RM_root), round(CDRRevSum_VAR_RM_995))
+Table_13 <- rbind(Table_13, Table_13_RMs)
+dimnames(Table_13) <- list(c(0:(length(Triangle)-2),"Risk Adjustment"),
+                           c("MW RMSEP","SD(Simulated)",paste0("VaR @ ", round(100*VAR_level_cdr$root,1),"%"),"VaR @ 99.5%"))
+names(dimnames(Table_13)) <- c("Future Year","Risk adjustments based on Reverse sum of CDRs")
+Table_13
+
+
+# For Fig 1 - Capital Profiles associated with Table 9 (including VaR @ target% of discounted outstanding reserves)
+# put in alphabetical order for legend
+a_profile <- Disc_BE_Profile
+b_profile <- CDR_SD_Profile
+c_profile <- CDR_VAR_Profile
+d_profile <- Capital_Profile(Disc_FutRes_VAR_root)
+
+Fig_1_Profiles <- tibble(date=c(0:(length(a_profile)-1)),a_profile, b_profile, c_profile, d_profile)
+#Fig_1_Profiles # gives wide format. Long format needed for graph:
+Fig_1_Profiles_long <- gather(Fig_1_Profiles, Method, Value, -"date")
+Fig_1_theme <- theme(legend.title=element_blank(), plot.title = element_text(hjust=0.5), legend.position="bottom")
+ggplot(Fig_1_Profiles_long, aes(x=date, y=Value*100, colour=Method, shape=Method)) +
+  geom_line(size=1) + geom_point(size=1.8) +
+  guides(shape=FALSE) +
+  ggtitle("Fig 1. Capital Profiles by Year") +
+  labs(y="Percent of Opening Capital",x="Future Year") +
+  scale_color_hue(labels = c("Best estimate basis", "Standard deviation","VaR(CDR) @ 99.5%", 
+                             paste0("VaR(Reserves) @ ", round(100*VAR_level_res$root,1),"%"))) +
+  scale_x_continuous(breaks=c(0:(length(Triangle)-2))) +
+  theme_bw() + Fig_1_theme
+
+

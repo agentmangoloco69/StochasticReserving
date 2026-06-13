@@ -1,0 +1,52 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software and the underlying papers listed in the references."
+title: "Stochastic Reserving using analytic (closed form), bootstrap, and 'Bayesian' MCMC methods"
+abstract: >-
+  Stochastic reserving functions in R (with R Markdown) and Python (with
+  Jupyter) to reproduce the examples in England & Verrall (2006) and England,
+  Verrall & Wüthrich (2018/2019), covering analytic (closed form), bootstrap and
+  Bayesian MCMC approaches, with applications to Solvency II risk margins and
+  IFRS 17 risk adjustments.
+type: software
+authors:
+  - family-names: England
+    given-names: Peter David
+    affiliation: "EMC Actuarial and Analytics Ltd"
+version: 1.0.0
+license: MIT
+repository-code: "https://github.com/DrPeterEngland/StochasticReserving"
+keywords:
+  - actuarial science
+  - claims reserving
+  - stochastic reserving
+  - bootstrap
+  - MCMC
+  - Solvency II
+  - IFRS 17
+references:
+  - type: article
+    title: "Predictive distributions of outstanding liabilities in general insurance"
+    authors:
+      - family-names: England
+        given-names: Peter
+      - family-names: Verrall
+        given-names: Richard
+    journal: "Annals of Actuarial Science"
+    year: 2006
+    volume: 1
+    issue: 2
+    start: 221
+    end: 270
+    doi: 10.1017/S1748499500000142
+  - type: article
+    title: "On the lifetime and one-year views of reserve risk, with application to IFRS 17 and Solvency II risk margins"
+    authors:
+      - family-names: England
+        given-names: Peter
+      - family-names: Verrall
+        given-names: Richard
+      - family-names: Wüthrich
+        given-names: Mario
+    journal: "Insurance: Mathematics and Economics"
+    year: 2019
+    doi: 10.1016/j.insmatheco.2018.12.002

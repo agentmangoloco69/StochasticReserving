@@ -1,0 +1,17 @@
+# RStudio / R session artifacts
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.positai
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+
+# Compiled Stan executables (regenerated on first run; can take a few minutes)
+*.exe
+
+# OS / editor cruft
+.DS_Store
+.ipynb_checkpoints/

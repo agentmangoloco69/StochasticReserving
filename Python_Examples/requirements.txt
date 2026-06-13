@@ -1,0 +1,18 @@
+# Python dependencies for the Stochastic Reserving examples
+#
+# Tested with Python 3.13. A virtual environment is recommended:
+#     python -m venv .venv
+#     source .venv/bin/activate        (Windows: .venv\Scripts\activate)
+#     pip install -r requirements.txt
+#
+# Core packages (required for the analytic and bootstrap methods)
+numpy
+pandas
+matplotlib
+statsmodels
+
+# MCMC methods only (StochResFunctions_MCMC.py).
+# CmdStanPy requires a working C++ toolchain and a one-off CmdStan install
+# (run `python -m cmdstanpy.install_cmdstan` after installing the package).
+# Omit this line if you are not running the Bayesian / MCMC examples.
+cmdstanpy

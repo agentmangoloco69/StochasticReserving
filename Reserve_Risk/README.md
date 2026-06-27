@@ -37,5 +37,11 @@
 - Python API: `from triangle_io import import_triangles, to_triangle`.
 - CLI (manifest-driven): `python triangle_io.py --manifest triangles_manifest.example.yaml --out triangles_long.csv` (see the example manifest in this folder).
 
+#### vba/  (Excel-native version)
+
+- A self-contained VBA port of the **analytic** Merz-Wuthrich one-year CDR for running in Excel with no Python install - UDFs (`=MW_EmergenceFactor(range)` etc.), a `MW_Report` macro, a `MW_Sensitivity` (leave-one-out) macro, and `MW_SelfTest`.
+- Validated to reproduce the Python/R reference (GenIns: 72.7%, one-year 1,774,014, ultimate 2,441,364). Simulation method is not ported (use Python for that).
+- See `vba/README.md` for setup. Import `vba/MerzWuthrich.bas` into the `vba/MerzWuthrich_demo.xlsx` workbook and save as `.xlsm`.
+
 
 

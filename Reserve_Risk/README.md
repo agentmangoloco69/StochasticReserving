@@ -14,5 +14,15 @@
 - Example: `python risk_emergence.py --triangle claims_triangle.csv`
 - Example: `python risk_emergence.py --triangle ../simulation/outputs/gl_canada_triangle.csv --periodicity quarterly`
 
+#### merz_wuthrich.py
+
+- Standalone **analytic** (non-simulated) one-year reserve risk via Merz & Wuthrich (2008), the closed-form companion to Mack (1993) for the lifetime view.
+- Reports the ultimate (Mack) S.E., the one-year (Merz-Wuthrich) S.E., the **risk emergence factor** (one-year S.E. / ultimate S.E.), and the full year-by-year emergence pattern - all without Monte Carlo.
+- `--sensitivity` runs a leave-one-out over every age-to-age ratio to show which cells/outliers move the one-year risk the most (and which barely touch the emergence factor).
+- Tail-sigma extrapolation: `--sigma-method loglinear` (default) reproduces R's `ChainLadder::CDR` exactly; `--sigma-method mack` gives the classic Mack S.E. (and matches this repo's own bootstrap/simulation).
+- Validated against R `ChainLadder::CDR(MackChainLadder(GenIns))` - see `test_merz_wuthrich.py` (`python test_merz_wuthrich.py`).
+- Assumptions are Mack's: chain ladder is correct, accident years independent, Var proportional to cumulative (alpha = 1), no tail beyond the triangle. A single unusual cell feeds both the factor and the variance of its column, so outliers can move the answer - use `--sensitivity` to find them.
+- Example: `python merz_wuthrich.py --triangle claims_triangle.csv --sensitivity`
+
 
 

@@ -1,28 +1,38 @@
 """
-Compute the reserve-risk emergence pattern for a single line of business.
+Reserve-risk emergence for a single line of business - one entry point, two methods.
 
-Feed in an incremental claims triangle and this:
-  1. bootstraps the reserve distribution (lifetime / ultimate view),
-  2. runs the "Actuary-in-the-Box" CDR for each future calendar year
-     (the sequence of one-year views), and
-  3. reports the RISK EMERGENCE FACTOR -- the share of total (ultimate) reserve
-     risk that emerges over the next calendar year -- plus the full year-by-year
-     emergence pattern.
-
-The risk emergence factor is:
+The RISK EMERGENCE FACTOR is the share of total (ultimate) reserve risk that
+emerges over the next calendar year:
 
     one-year risk        SD( total one-year CDR, calendar year 1 )
     -------------    =   ----------------------------------------
     ultimate risk        SD( total ultimate reserve )
 
-Calculations are on an ANNUAL x ANNUAL triangle. If you have quarterly data,
-pass --periodicity quarterly and it is aggregated to annual first (a partially
-developed most-recent year is dropped so the result is a proper triangle).
+Two ways to get it, behind a single `risk_emergence(...)` call:
+
+  method="analytic"   (default) - closed-form Merz-Wuthrich (2008) one-year CDR
+                      vs Mack (1993) ultimate. Fast, exact, validated against R
+                      ChainLadder. Standard-deviation based. Engine: merz_wuthrich.py.
+  method="simulation" - bootstrap the reserve distribution and run the
+                      "Actuary-in-the-Box" CDR. Slower, but yields the full
+                      predictive distribution (VaR/tails), and supports ODP /
+                      Negative Binomial models. Engine: StochResFunctions.py.
+
+Both return the same headline keys, so callers can switch methods freely.
+
+Calculations are on an ANNUAL x ANNUAL triangle. For quarterly data pass
+--periodicity quarterly (CLI) or call aggregate_to_annual() first; a partially
+developed most-recent year is dropped so the result is a proper triangle.
 
 Usage:
-    python risk_emergence.py --triangle claims_triangle.csv
-    python risk_emergence.py --triangle my_quarterly.csv --periodicity quarterly
-    python risk_emergence.py --triangle paid.csv --method ODPNonConstant --out emergence.csv
+    python risk_emergence.py --triangle claims_triangle.csv                 # analytic (default)
+    python risk_emergence.py --triangle claims_triangle.csv --sensitivity   # + outlier scan
+    python risk_emergence.py --triangle paid.csv --method simulation --model ODPNonConstant
+    python risk_emergence.py --triangle quarterly.csv --periodicity quarterly
+
+    from risk_emergence import risk_emergence, to_triangle  # to_triangle re-exported
+    res = risk_emergence(tri)                       # analytic
+    res = risk_emergence(tri, method="simulation")  # bootstrap + CDR
 """
 
 from __future__ import annotations
@@ -34,6 +44,8 @@ import numpy as np
 import pandas as pd
 
 import StochResFunctions as srf
+import merz_wuthrich as mw
+from triangle_io import to_triangle  # re-export for convenience
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +61,9 @@ def aggregate_to_annual(incremental_quarterly: np.ndarray) -> np.ndarray:
     drops out. Returns the largest proper annual triangle (standard upper-left
     shape). The input must be square with a number of periods divisible by 4.
     """
-    n = incremental_quarterly.shape[0]
-    if incremental_quarterly.shape[1] != n:
+    q = np.asarray(incremental_quarterly, dtype=float)
+    n = q.shape[0]
+    if q.shape[1] != n:
         raise ValueError("Quarterly triangle must be square.")
     if n % 4 != 0:
         raise ValueError(f"Quarterly triangle size ({n}) must be divisible by 4.")
@@ -59,7 +72,7 @@ def aggregate_to_annual(incremental_quarterly: np.ndarray) -> np.ndarray:
     annual = np.full((m, m), np.nan)
     for I in range(m):
         for J in range(m):
-            block = incremental_quarterly[4 * I:4 * I + 4, 4 * J:4 * J + 4]
+            block = q[4 * I:4 * I + 4, 4 * J:4 * J + 4]
             if not np.isnan(block).any():
                 annual[I, J] = block.sum()
 
@@ -82,67 +95,111 @@ def _largest_standard_triangle(tri: np.ndarray) -> np.ndarray:
     )
 
 
+def _as_array(x) -> np.ndarray:
+    """Accept a labelled triangle DataFrame or a raw array; return a float array."""
+    if hasattr(x, "to_numpy"):
+        return x.to_numpy(dtype=float)
+    return np.asarray(x, dtype=float)
+
+
 # ---------------------------------------------------------------------------
-# Risk emergence
+# The two engines
 # ---------------------------------------------------------------------------
 
-def risk_emergence(
-    incremental_triangle: np.ndarray,
-    method: str = "Mack",
-    iterations: int = 10000,
-    seed: int = 101,
-    bootstrap_dist: str = "Gamma",
-    forecast_dist: str = "Gamma",
-    var_p: float = 0.995,
-) -> dict:
-    """
-    Bootstrap the triangle, run the full-picture CDR, and compute the emergence
-    factor and pattern. Returns a dict with a summary DataFrame and headline figures.
+def _emergence_analytic(triangle, sigma_method: str = "loglinear") -> dict:
+    res = mw.merz_wuthrich(triangle, sigma_method=sigma_method)
+    return {
+        "method": "analytic",
+        "emergence_factor": res["emergence_factor"],
+        "total_oneyear_se": res["total_oneyear_se"],
+        "total_ultimate_se": res["total_ultimate_se"],
+        "total_reserve": res["total_reserve"],
+        "emergence_pattern": res["emergence_pattern"],
+        "detail": res["table"],
+    }
 
-    `incremental_triangle` may be a labelled triangle DataFrame or a raw array.
-    """
-    if hasattr(incremental_triangle, "to_numpy"):
-        incremental_triangle = incremental_triangle.to_numpy(dtype=float)
-    cumulative = srf.Cumulatives(incremental_triangle)
+
+def _emergence_simulation(triangle, model="Mack", iterations=10000, seed=101,
+                          bootstrap_dist="Gamma", forecast_dist="Gamma",
+                          var_p=0.995) -> dict:
+    incremental = _as_array(triangle)
+    cumulative = srf.Cumulatives(incremental)
 
     bstrap = srf.Run_Bootstrap(
-        cumulative, method=method, Mask=None, iterations=iterations, seed=seed,
+        cumulative, method=model, Mask=None, iterations=iterations, seed=seed,
         BootstrapDist=bootstrap_dist, ForecastDist=forecast_dist, UserSqrtScale=None,
     )
     avg_ult_reserve = bstrap["Avg_TotalReserve"]
     sd_ult_reserve = bstrap["SD_TotalReserve"]
 
-    # The final future year has too few valid CDRs for a mean/variance; numpy warns
-    # on those empty slices. The figures are valid, so silence the noise.
+    # The final future year has too few valid CDRs for a mean/variance; numpy
+    # warns on those empty slices. The figures are valid, so silence the noise.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         cdr = srf.CDR_Full_Picture(
             cumulative, bstrap["Complete_Cumulatives"], VAR_p=var_p, Mask=None,
         )
-    avg_cdr = cdr["Avg_TotalCDR"]        # by future calendar year (year 1 first)
+    avg_cdr = cdr["Avg_TotalCDR"]
     sd_cdr = cdr["SD_TotalCDR"]
     var_cdr = cdr["TotalCDR_VAR"]
-
     n_years = len(sd_cdr)
-    emergence_factor = sd_cdr[0] / sd_ult_reserve if sd_ult_reserve else np.nan
+    ef = sd_cdr[0] / sd_ult_reserve if sd_ult_reserve else np.nan
 
-    table = pd.DataFrame({
+    detail = pd.DataFrame({
         "future_year": np.arange(1, n_years + 1),
         "avg_CDR": avg_cdr,
         "SD_CDR": sd_cdr,
         f"VaR@{var_p:.1%}_CDR": var_cdr,
         "emergence_vs_ultimate": sd_cdr / sd_ult_reserve if sd_ult_reserve else np.nan,
     })
-
+    emergence_pattern = pd.DataFrame({
+        "future_year": np.arange(1, n_years + 1),
+        "total_CDR_SE": sd_cdr,
+        "ratio_to_ultimate": sd_cdr / sd_ult_reserve if sd_ult_reserve else np.nan,
+    })
     return {
-        "table": table,
-        "avg_ultimate_reserve": avg_ult_reserve,
-        "sd_ultimate_reserve": sd_ult_reserve,
+        "method": "simulation",
+        "emergence_factor": ef,
+        "total_oneyear_se": float(sd_cdr[0]),
+        "total_ultimate_se": float(sd_ult_reserve),
+        "total_reserve": float(avg_ult_reserve),
         "cov_ultimate_reserve": bstrap["CoV_TotalReserve"],
-        "emergence_factor": emergence_factor,
-        "method": method,
+        "emergence_pattern": emergence_pattern,
+        "detail": detail,
+        "model": model,
         "iterations": iterations,
     }
+
+
+# ---------------------------------------------------------------------------
+# Unified entry point
+# ---------------------------------------------------------------------------
+
+def risk_emergence(triangle, method: str = "analytic", *,
+                   sigma_method: str = "loglinear",
+                   model: str = "Mack", iterations: int = 10000, seed: int = 101,
+                   bootstrap_dist: str = "Gamma", forecast_dist: str = "Gamma",
+                   var_p: float = 0.995) -> dict:
+    """
+    Risk emergence factor + pattern for one triangle.
+
+    triangle : labelled incremental triangle DataFrame (from to_triangle) or array.
+    method   : "analytic" (Merz-Wuthrich, default) or "simulation" (bootstrap + CDR).
+
+    Analytic uses `sigma_method` (loglinear | mack). Simulation uses `model`
+    (Mack | ODPConstant | ODPNonConstant | NegBinConstant | NegBinNonConstant),
+    `iterations`, `seed`, `bootstrap_dist`, `forecast_dist`, `var_p`.
+
+    Returns a dict with common keys: method, emergence_factor, total_oneyear_se,
+    total_ultimate_se, total_reserve, emergence_pattern (per future year), detail.
+    """
+    if method == "analytic":
+        return _emergence_analytic(triangle, sigma_method=sigma_method)
+    if method == "simulation":
+        return _emergence_simulation(triangle, model=model, iterations=iterations,
+                                     seed=seed, bootstrap_dist=bootstrap_dist,
+                                     forecast_dist=forecast_dist, var_p=var_p)
+    raise ValueError(f"method must be 'analytic' or 'simulation', got '{method}'.")
 
 
 # ---------------------------------------------------------------------------
@@ -152,18 +209,25 @@ def risk_emergence(
 def main():
     parser = argparse.ArgumentParser(description="Reserve-risk emergence from a claims triangle.")
     parser.add_argument("--triangle", required=True, help="Incremental triangle CSV.")
-    parser.add_argument("--method", default="Mack",
-                        help="Mack | ODPConstant | ODPNonConstant | NegBinConstant | NegBinNonConstant")
+    parser.add_argument("--method", default="analytic", choices=["analytic", "simulation"],
+                        help="analytic (Merz-Wuthrich, default) or simulation (bootstrap + CDR).")
     parser.add_argument("--periodicity", default="annual", choices=["annual", "quarterly"],
                         help="If 'quarterly', aggregate 4x4 blocks to annual first.")
-    parser.add_argument("--iterations", type=int, default=10000)
-    parser.add_argument("--seed", type=int, default=101)
-    parser.add_argument("--bootstrap-dist", default="Gamma",
-                        help="Estimation-error pseudo-data: NonParametric | Gamma | Lognormal")
-    parser.add_argument("--forecast-dist", default="Gamma",
-                        help="Process-error forecast: NonParametric | Gamma | Lognormal")
-    parser.add_argument("--var-p", type=float, default=0.995)
-    parser.add_argument("--out", help="Optional path to write the emergence table CSV.")
+    # analytic options
+    parser.add_argument("--sigma-method", default="loglinear", choices=["loglinear", "mack"],
+                        help="[analytic] tail-sigma extrapolation.")
+    parser.add_argument("--sensitivity", action="store_true",
+                        help="[analytic] also run leave-one-out outlier sensitivity.")
+    parser.add_argument("--top", type=int, default=10, help="[analytic] sensitivity rows to show.")
+    # simulation options
+    parser.add_argument("--model", default="Mack",
+                        help="[simulation] Mack | ODPConstant | ODPNonConstant | NegBin*")
+    parser.add_argument("--iterations", type=int, default=10000, help="[simulation]")
+    parser.add_argument("--seed", type=int, default=101, help="[simulation]")
+    parser.add_argument("--bootstrap-dist", default="Gamma", help="[simulation] estimation-error.")
+    parser.add_argument("--forecast-dist", default="Gamma", help="[simulation] process-error.")
+    parser.add_argument("--var-p", type=float, default=0.995, help="[simulation] VaR level.")
+    parser.add_argument("--out", help="Optional CSV path for the emergence pattern.")
     args = parser.parse_args()
 
     incremental = pd.read_csv(args.triangle, index_col=0).to_numpy(dtype=float)
@@ -171,23 +235,39 @@ def main():
         incremental = aggregate_to_annual(incremental)
         print(f"Aggregated quarterly -> annual {incremental.shape[0]}x{incremental.shape[1]} triangle.\n")
 
-    result = risk_emergence(
-        incremental, method=args.method, iterations=args.iterations, seed=args.seed,
+    res = risk_emergence(
+        incremental, method=args.method, sigma_method=args.sigma_method,
+        model=args.model, iterations=args.iterations, seed=args.seed,
         bootstrap_dist=args.bootstrap_dist, forecast_dist=args.forecast_dist, var_p=args.var_p,
     )
 
-    print(f"Method: {result['method']}   Iterations: {result['iterations']:,}")
-    print(f"Ultimate reserve   : mean {result['avg_ultimate_reserve']:,.0f}   "
-          f"SD {result['sd_ultimate_reserve']:,.0f}   "
-          f"CoV {result['cov_ultimate_reserve']:.1%}")
-    print(f"\n>>> RISK EMERGENCE FACTOR (year 1 one-year risk / ultimate risk): "
-          f"{result['emergence_factor']:.1%}\n")
+    if res["method"] == "simulation":
+        print(f"Method: simulation ({res['model']}, {res['iterations']:,} iterations)")
+    else:
+        print(f"Method: analytic (Merz-Wuthrich, sigma={args.sigma_method})")
+    print(f"Total reserve      : {res['total_reserve']:,.0f}")
+    print(f"Ultimate risk  SE  : {res['total_ultimate_se']:,.0f}")
+    print(f"One-year risk  SE  : {res['total_oneyear_se']:,.0f}")
+    print(f"\n>>> RISK EMERGENCE FACTOR (one-year SE / ultimate SE): "
+          f"{res['emergence_factor']:.1%}\n")
+    print("Emergence pattern by future calendar year:")
     with pd.option_context("display.float_format", lambda x: f"{x:,.3f}"):
-        print(result["table"].to_string(index=False))
+        print(res["emergence_pattern"].to_string(index=False))
+
+    if args.sensitivity and res["method"] == "analytic":
+        print("\n" + "=" * 60)
+        print("Leave-one-out sensitivity (largest impact on one-year SE):")
+        sens = mw.sensitivity_oneyear(incremental, sigma_method=args.sigma_method)
+        money = lambda x: f"{x:,.0f}"
+        formatters = {"d_oneyear_SE": money, "d_ultimate_SE": money, "d_reserve": money,
+                      "d_emergence_factor": lambda x: f"{x:+.3f}"}
+        print(sens.head(args.top).to_string(index=False, formatters=formatters))
+    elif args.sensitivity:
+        print("\n(--sensitivity is only available for method=analytic)")
 
     if args.out:
-        result["table"].to_csv(args.out, index=False)
-        print(f"\nWrote emergence table -> {args.out}")
+        res["emergence_pattern"].to_csv(args.out, index=False)
+        print(f"\nWrote emergence pattern -> {args.out}")
 
 
 if __name__ == "__main__":

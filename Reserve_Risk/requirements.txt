@@ -10,6 +10,11 @@ numpy
 pandas
 matplotlib
 statsmodels
+scipy
+
+# Excel triangle import (triangle_io.py) and YAML/JSON manifests
+openpyxl
+pyyaml
 
 # MCMC methods only (StochResFunctions_MCMC.py).
 # CmdStanPy requires a working C++ toolchain and a one-off CmdStan install

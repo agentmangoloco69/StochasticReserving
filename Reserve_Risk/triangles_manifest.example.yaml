@@ -1,0 +1,39 @@
+# Example manifest for triangle_io.py
+# Run: python triangle_io.py --manifest triangles_manifest.example.yaml --out triangles_long.csv
+#
+# `defaults` are merged into every triangle spec (spec values win).
+# Each triangle is located by EITHER an explicit `range` OR a `top_left` corner
+# (auto-detect). Layout is assumed to be a labelled grid (AY labels down the
+# side, DY headers across the top); set has_labels: false for a raw value block.
+
+defaults:
+  entity: ABC
+  region: Canada
+
+triangles:
+  - name: GL_2024
+    file: data/2024.xlsx
+    sheet: GL
+    range: "B2:L12"          # explicit range incl. labels
+    lob: GL
+    orientation: incremental
+
+  - name: Auto_2024
+    file: data/2024.xlsx
+    sheet: CommercialAuto
+    top_left: "C3"           # auto-detect extent from this corner
+    lob: CommercialAuto
+    orientation: cumulative   # converted to incremental on import
+
+  - name: Property_2023
+    file: data/2023.xlsx     # a different file, sheet and size are fine
+    sheet: Property
+    top_left: "B2"
+    lob: Property
+
+  - name: GL_EP             # a vector (earned premium) stored alongside
+    file: data/2024.xlsx
+    sheet: Premium
+    range: "A1:B11"
+    type: Vector
+    lob: GL

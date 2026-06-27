@@ -542,6 +542,87 @@ Public Sub MW_RunFromSetup()
 End Sub
 
 '==============================================================================
+' Macro: portfolio aggregation across LoBs (single correlation rho)
+'
+' Reads the per-LoB one-year SE and ultimate SE from "RiskEmergence_Summary"
+' (produced by MW_RunFromSetup), aggregates each with a single pairwise rho, and
+' writes a portfolio block. Emergence factors are ratios of SDs, so the dollar
+' SEs are aggregated WITH correlation, then divided - you cannot average the
+' factors directly. rho largely cancels in the ratio, so the portfolio factor is
+' robust; the independence / full-correlation bookends are shown too.
+'==============================================================================
+Public Sub MW_Portfolio()
+    Dim ws As Worksheet, hdr As Long, c As Long
+    Dim colWs As Long, colOY As Long, colUL As Long, colStat As Long
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("RiskEmergence_Summary")
+    On Error GoTo 0
+    If ws Is Nothing Then
+        MsgBox "Run MW_RunFromSetup first (no 'RiskEmergence_Summary' sheet).", vbExclamation: Exit Sub
+    End If
+
+    hdr = 3
+    For c = 1 To 30
+        Select Case CStr(ws.Cells(hdr, c).Value)
+            Case "Worksheet": colWs = c
+            Case "One-year SE": colOY = c
+            Case "Ultimate SE": colUL = c
+            Case "Status": colStat = c
+        End Select
+    Next c
+    If colOY = 0 Or colUL = 0 Then
+        MsgBox "Could not find the 'One-year SE' / 'Ultimate SE' columns.", vbExclamation: Exit Sub
+    End If
+
+    Dim rhoStr As String, rho As Double
+    rhoStr = InputBox("Correlation rho between LoBs (0 = independent, 1 = fully correlated):", _
+                      "Portfolio aggregation", "0.25")
+    If rhoStr = "" Then Exit Sub
+    If Not IsNumeric(rhoStr) Then MsgBox "rho must be numeric.", vbExclamation: Exit Sub
+    rho = CDbl(rhoStr)
+    If rho < 0 Or rho > 1 Then MsgBox "rho must be between 0 and 1.", vbExclamation: Exit Sub
+
+    Dim r As Long, lastRow As Long, cnt As Long
+    Dim So As Double, Su As Double, SSo As Double, SSu As Double, oVal As Double, uVal As Double
+    r = hdr + 1
+    Do While Trim(CStr(ws.Cells(r, colWs).Value)) <> ""
+        If colStat = 0 Or UCase(Trim(CStr(ws.Cells(r, colStat).Value))) = "OK" Then
+            If IsNumeric(ws.Cells(r, colOY).Value) And IsNumeric(ws.Cells(r, colUL).Value) Then
+                oVal = CDbl(ws.Cells(r, colOY).Value): uVal = CDbl(ws.Cells(r, colUL).Value)
+                So = So + oVal: Su = Su + uVal
+                SSo = SSo + oVal * oVal: SSu = SSu + uVal * uVal
+                cnt = cnt + 1
+            End If
+        End If
+        lastRow = r: r = r + 1
+    Loop
+    If cnt = 0 Then MsgBox "No OK rows with numeric SEs found.", vbExclamation: Exit Sub
+
+    Dim O As Double, U As Double
+    O = Sqr(rho * So * So + (1 - rho) * SSo)
+    U = Sqr(rho * Su * Su + (1 - rho) * SSu)
+
+    Dim w As Long: w = lastRow + 2
+    ws.Cells(w, 1).Value = "Portfolio (rho = " & Format(rho, "0.00") & ", " & cnt & " LoBs)"
+    ws.Cells(w, 1).Font.Bold = True
+    ws.Cells(w + 1, 1).Value = "Portfolio one-year SE": ws.Cells(w + 1, 2).Value = O
+    ws.Cells(w + 2, 1).Value = "Portfolio ultimate SE": ws.Cells(w + 2, 2).Value = U
+    ws.Cells(w + 3, 1).Value = "Portfolio emergence factor": ws.Cells(w + 3, 2).Value = O / U
+    ws.Cells(w + 3, 2).NumberFormat = "0.0%"
+    ws.Cells(w + 4, 1).Value = "  bookend: independent (rho=0)"
+    ws.Cells(w + 4, 2).Value = Sqr(SSo) / Sqr(SSu): ws.Cells(w + 4, 2).NumberFormat = "0.0%"
+    ws.Cells(w + 5, 1).Value = "  bookend: fully correlated (rho=1)"
+    ws.Cells(w + 5, 2).Value = So / Su: ws.Cells(w + 5, 2).NumberFormat = "0.0%"
+    ws.Cells(w + 6, 1).Value = "Diversification benefit (one-year)"
+    ws.Cells(w + 6, 2).Value = 1 - O / So: ws.Cells(w + 6, 2).NumberFormat = "0.0%"
+    ws.Columns("A:B").AutoFit
+    ws.Activate
+    MsgBox "Portfolio emergence factor = " & Format(O / U, "0.0%") & _
+           "  (rho " & Format(rho, "0.00") & ", " & cnt & " LoBs)", vbInformation, "MW_Portfolio"
+End Sub
+
+'==============================================================================
 ' Self-test: build the GenIns triangle in code and check the answer
 '==============================================================================
 Public Sub MW_SelfTest()

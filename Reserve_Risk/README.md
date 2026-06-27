@@ -15,6 +15,7 @@
 - Annual x annual; pass `--periodicity quarterly` to aggregate a quarterly triangle first (a partially developed most-recent year is dropped).
 - `--sensitivity` (analytic) runs a leave-one-out over every age-to-age ratio to show which cells/outliers move the one-year risk the most (and which barely touch the emergence factor).
 - Python API: `from risk_emergence import risk_emergence, to_triangle` then `risk_emergence(tri)` / `risk_emergence(tri, method="simulation")`.
+- **Portfolio aggregation:** `portfolio_emergence(results, rho=0.25)` combines several LoBs into one portfolio emergence factor. Emergence factors are ratios of SDs, so it aggregates the dollar SEs with a single correlation `rho` (same matrix for both horizons, so `rho` largely cancels and the factor is robust) and reports independence/full-correlation bookends. Single `rho` in v1; full correlation matrix tracked in issue #5.
 - Examples:
   - `python risk_emergence.py --triangle claims_triangle.csv` (analytic, default)
   - `python risk_emergence.py --triangle claims_triangle.csv --sensitivity`

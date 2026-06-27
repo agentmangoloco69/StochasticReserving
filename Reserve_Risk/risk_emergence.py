@@ -33,6 +33,10 @@ Usage:
     from risk_emergence import risk_emergence, to_triangle  # to_triangle re-exported
     res = risk_emergence(tri)                       # analytic
     res = risk_emergence(tri, method="simulation")  # bootstrap + CDR
+
+    # Aggregate several LoBs into one portfolio emergence factor:
+    from risk_emergence import portfolio_emergence
+    port = portfolio_emergence([res_gl, res_auto, res_property], rho=0.25)
 """
 
 from __future__ import annotations
@@ -200,6 +204,70 @@ def risk_emergence(triangle, method: str = "analytic", *,
                                      seed=seed, bootstrap_dist=bootstrap_dist,
                                      forecast_dist=forecast_dist, var_p=var_p)
     raise ValueError(f"method must be 'analytic' or 'simulation', got '{method}'.")
+
+
+# ---------------------------------------------------------------------------
+# Portfolio aggregation across lines of business
+# ---------------------------------------------------------------------------
+
+def _aggregate_se(x: np.ndarray, rho: float) -> float:
+    """SD of a sum under a single pairwise correlation rho:
+    Var = rho*(sum x)^2 + (1-rho)*sum(x^2).  rho=0 independent, rho=1 comonotonic."""
+    s = x.sum()
+    return float(np.sqrt(rho * s * s + (1.0 - rho) * np.sum(x * x)))
+
+
+def portfolio_emergence(oneyear_se, ultimate_se=None, rho: float = 0.25, names=None) -> dict:
+    """
+    Combine per-LoB risk emergence into one portfolio number.
+
+    Emergence factors are ratios of standard deviations, so they cannot be
+    averaged directly - the dollar SEs must be aggregated WITH a correlation
+    assumption, then divided. This applies a single correlation `rho` between
+    every pair of LoBs (same matrix for the one-year and ultimate horizons, so
+    rho largely cancels in the ratio), and also reports the independence and
+    full-correlation bookends.
+
+    Inputs: either two array-likes (oneyear_se, ultimate_se), or a single list of
+    risk_emergence() result dicts as the first argument (ultimate_se left None).
+
+    Returns portfolio one-year SE, ultimate SE, emergence factor, the bookends,
+    and a per-LoB table.
+    """
+    if ultimate_se is None:                      # a list of risk_emergence() dicts
+        results = list(oneyear_se)
+        if names is None:
+            names = [r.get("name", f"LoB{i+1}") for i, r in enumerate(results)]
+        oneyear_se = [r["total_oneyear_se"] for r in results]
+        ultimate_se = [r["total_ultimate_se"] for r in results]
+
+    o = np.asarray(oneyear_se, dtype=float)
+    u = np.asarray(ultimate_se, dtype=float)
+    if names is None:
+        names = [f"LoB{i+1}" for i in range(len(o))]
+
+    O = _aggregate_se(o, rho)
+    U = _aggregate_se(u, rho)
+    O_ind, U_ind = _aggregate_se(o, 0.0), _aggregate_se(u, 0.0)
+    O_full, U_full = _aggregate_se(o, 1.0), _aggregate_se(u, 1.0)
+
+    table = pd.DataFrame({
+        "LoB": names,
+        "oneyear_SE": o,
+        "ultimate_SE": u,
+        "emergence_factor": o / u,
+    })
+
+    return {
+        "rho": rho,
+        "portfolio_oneyear_se": O,
+        "portfolio_ultimate_se": U,
+        "emergence_factor": O / U,
+        "emergence_factor_independent": O_ind / U_ind,
+        "emergence_factor_fully_correlated": O_full / U_full,
+        "diversification_benefit_oneyear": 1.0 - O / o.sum(),   # vs simply adding SEs
+        "table": table,
+    }
 
 
 # ---------------------------------------------------------------------------

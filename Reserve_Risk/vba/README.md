@@ -47,7 +47,24 @@ cumulative rather than incremental).
   on the one-year SE - shows which cells/outliers drive (or don't) the risk.
 - `MW_RunFromSetup` - **batch**: reads a `setup` sheet listing many triangles and
   analyses them all, writing a comparison to `RiskEmergence_Summary`.
+- `MW_Portfolio` - aggregates `RiskEmergence_Summary` into one portfolio
+  emergence factor using a single correlation `rho` (see below).
 - `MW_SelfTest` - validation against the built-in GenIns reference.
+
+## Portfolio aggregation (`MW_Portfolio`)
+
+After `MW_RunFromSetup`, run `MW_Portfolio` to combine all the LoBs into one
+number. It prompts for a correlation `rho` (0 = independent, 1 = fully
+correlated; default 0.25) and appends a portfolio block to the summary sheet.
+
+Emergence factors are **ratios of standard deviations**, so they cannot be
+averaged directly. The macro aggregates the dollar SEs with correlation
+(`Var = rho*(Sum x)^2 + (1-rho)*Sum x^2`) for the one-year and ultimate horizons
+separately, then divides. Because the same `rho` sits in both, it largely
+cancels and the portfolio factor is robust - the independence and
+full-correlation bookends are shown so you can see the (small) range. A single
+`rho` is used in v1; a full LoB correlation matrix is tracked as a future
+enhancement.
 
 ## Batch runs via the `setup` sheet
 

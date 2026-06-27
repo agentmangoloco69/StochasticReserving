@@ -4,7 +4,7 @@ Simulate quarterly claims development triangles for general insurance.
 Data is always simulated on an accident-quarter x development-quarter grid, so it
 can be aggregated to annual (or annual accident year x quarterly development)
 afterwards. Each cell is generated under an over-dispersed Poisson (ODP) noise
-model, matching the assumptions the reserving scripts in ../Python_Examples
+model, matching the assumptions the reserving scripts in ../Reserve_Risk
 bootstrap.
 
 Three usage modes:
@@ -234,7 +234,7 @@ def simulate_one(cfg: dict, bench: dict, rng: np.random.Generator):
 # ---------------------------------------------------------------------------
 
 def _triangle_to_frame(arr: np.ndarray) -> pd.DataFrame:
-    """Match the CSV style of ../Python_Examples/claims_triangle.csv."""
+    """Match the CSV style of ../Reserve_Risk/claims_triangle.csv."""
     Q, D = arr.shape
     df = pd.DataFrame(
         arr,

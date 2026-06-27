@@ -54,7 +54,7 @@ df = simulate(lob="wild", seed=123)
 
 - **Lines of business:** Property, Commercial Auto, General Liability, plus `wild`.
 - **Region:** Canada only.
-- **Noise model:** Over-dispersed Poisson (matches the bootstrap in `../Python_Examples`).
+- **Noise model:** Over-dispersed Poisson (matches the bootstrap in `../Reserve_Risk`).
 - **Benchmarks:** Hard-coded from CIA/IBC actuarial literature; live IBC scrape is best-effort and only supplements them.
 
 ## Roadmap (tracked as GitHub issues)

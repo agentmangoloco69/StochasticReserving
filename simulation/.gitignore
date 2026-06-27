@@ -1,0 +1,5 @@
+# Generated artifacts
+outputs/*
+!outputs/.gitkeep
+benchmarks/*
+!benchmarks/.gitkeep

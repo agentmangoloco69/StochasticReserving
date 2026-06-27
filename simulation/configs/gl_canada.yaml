@@ -1,0 +1,26 @@
+# Example simulation config: Canadian General Liability
+# Run: python simulate_triangle.py --config configs/gl_canada.yaml
+
+lob: gl                      # property | commercial_auto | gl | wild
+region: canada               # v1: canada only
+seed: 42                     # null for non-reproducible runs
+
+accident_years: 20           # -> 80 accident quarters
+development_quarters: null    # null -> square (equal to accident quarters)
+
+base_earned_premium: 100000000.0   # annual EP for the MOST RECENT accident year
+base_loss_ratio: null         # null -> use benchmark (GL = 0.68)
+
+severity_trend: 0.04          # annual loss severity trend (social inflation)
+frequency_trend: -0.01        # annual claim frequency trend
+premium_trend: 0.03           # annual earned-premium trend
+
+# Per-accident-year loss-ratio overrides (year 0 = oldest). Example: COVID years.
+elr_overrides: {}
+#  17: 0.85
+#  18: 0.79
+
+phi_factor: null              # null -> use benchmark (GL = 0.40)
+
+n_simulations: 1
+include_future: false         # true -> also write the un-masked "truth" triangle

@@ -1,3 +1,8 @@
+### Documentation
+
+- `docs/algorithm.html` — visual + written explanation of the analytic risk-emergence algorithm (two diagrams plus a detailed walkthrough at the bottom). Open in a browser; good for explaining to non-actuaries / the CRO.
+- `docs/algorithm.md` — the same detailed walkthrough in markdown.
+
 ### Notes for Python:
 
 - The files in the Reserve_Risk folder can be opened and run in a development environment such as Visual Studio Code (VS Code).

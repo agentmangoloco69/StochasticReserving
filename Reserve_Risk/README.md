@@ -27,7 +27,7 @@
 #### triangle_io.py
 
 - Imports triangles (and vectors such as earned premium) from one or more Excel files into a single tidy **long table**: `Region | Entity | LoB | AY | DY | Type | Name | Value`. DY is development length/lag; values are stored **incremental**.
-- One table holds many triangles of different sizes/sources; filter + pivot to get the array a tool needs: `to_triangle_array(long, name="GL_2024")` returns an incremental triangle ready for `merz_wuthrich` / `risk_emergence`.
+- One table holds many triangles of different sizes/sources; `to_triangle(long, name="GL_2024")` returns a single labelled incremental triangle (DataFrame) that you pass straight to `merz_wuthrich` / `risk_emergence` (both accept a DataFrame or array).
 - Driven by a list of **specs** (one per triangle), so different files, sheet names, ranges and sizes are all handled. Each triangle is located by an explicit `range` (e.g. `"B2:L12"`) or a `top_left` corner (auto-detect); layout defaults to a labelled grid; `orientation: cumulative` is converted to incremental on import; `type: Vector` stores AY-indexed vectors (DY = `<NA>`).
 - Python API: `from triangle_io import import_triangles, to_triangle_array`.
 - CLI (manifest-driven): `python triangle_io.py --manifest triangles_manifest.example.yaml --out triangles_long.csv` (see the example manifest in this folder).

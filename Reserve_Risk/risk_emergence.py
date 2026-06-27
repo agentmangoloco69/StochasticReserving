@@ -98,7 +98,11 @@ def risk_emergence(
     """
     Bootstrap the triangle, run the full-picture CDR, and compute the emergence
     factor and pattern. Returns a dict with a summary DataFrame and headline figures.
+
+    `incremental_triangle` may be a labelled triangle DataFrame or a raw array.
     """
+    if hasattr(incremental_triangle, "to_numpy"):
+        incremental_triangle = incremental_triangle.to_numpy(dtype=float)
     cumulative = srf.Cumulatives(incremental_triangle)
 
     bstrap = srf.Run_Bootstrap(

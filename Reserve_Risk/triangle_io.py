@@ -34,7 +34,7 @@ Spec keys (a `defaults` dict can supply any of these for every spec):
     dev_as      "length" (default; DY = 1..n) or "label" (use the DY header row)
 
 Example:
-    from triangle_io import import_triangles, to_triangle_array
+    from triangle_io import import_triangles, to_triangle
     long = import_triangles(
         [
             {"file": "2024.xlsx", "sheet": "GL",  "range": "B2:L12",
@@ -45,8 +45,8 @@ Example:
         ],
         defaults={"entity": "ABC"},
     )
-    arr, ays, dys = to_triangle_array(long, name="GL_2024")
-    # arr is incremental, ready for merz_wuthrich / risk_emergence
+    tri = to_triangle(long, name="GL_2024")   # labelled incremental triangle
+    # pass straight to a tool: merz_wuthrich(tri) / risk_emergence(tri)
 """
 
 from __future__ import annotations
@@ -197,11 +197,16 @@ def import_triangles(specs, defaults: dict | None = None) -> pd.DataFrame:
     return df
 
 
-def to_triangle_array(long_df: pd.DataFrame, region=None, entity=None, lob=None,
-                      name=None):
+def to_triangle(long_df: pd.DataFrame, region=None, entity=None, lob=None,
+                name=None) -> pd.DataFrame:
     """
-    Filter the long table to a single triangle and pivot to an incremental 2D
-    array. Returns (array, ay_index, dy_index). Missing cells are NaN.
+    Filter the long table to a single triangle and pivot it to an incremental
+    triangle, returned as a labelled DataFrame (AY index, DY columns; missing
+    cells are NaN).
+
+    The result can be passed straight to merz_wuthrich() / risk_emergence(),
+    which accept a DataFrame or array. Use .to_numpy() if you want the raw array,
+    or .index / .columns for the AY / DY labels.
     """
     sub = long_df[long_df["Type"] == "Triangle"]
     for col, val in [("Region", region), ("Entity", entity), ("LoB", lob), ("Name", name)]:
@@ -216,8 +221,7 @@ def to_triangle_array(long_df: pd.DataFrame, region=None, entity=None, lob=None,
                          "narrow region/entity/lob/name.")
 
     pivot = sub.pivot_table(index="AY", columns="DY", values="Value", aggfunc="sum")
-    pivot = pivot.sort_index().sort_index(axis=1)
-    return pivot.to_numpy(dtype=float), list(pivot.index), list(pivot.columns)
+    return pivot.sort_index().sort_index(axis=1)
 
 
 # ---------------------------------------------------------------------------

@@ -48,6 +48,13 @@ import pandas as pd
 # Triangle / chain-ladder building blocks
 # ---------------------------------------------------------------------------
 
+def _as_array(x) -> np.ndarray:
+    """Accept a labelled triangle DataFrame or a raw array; return a float array."""
+    if hasattr(x, "to_numpy"):
+        return x.to_numpy(dtype=float)
+    return np.asarray(x, dtype=float)
+
+
 def _cumulate(incremental: np.ndarray) -> np.ndarray:
     """Row-wise cumulative sum, preserving NaN (unobserved) cells."""
     cum = np.full_like(incremental, np.nan, dtype=float)
@@ -226,7 +233,7 @@ def merz_wuthrich(incremental: np.ndarray, weight_mask: np.ndarray | None = None
                         ratio of the ultimate S.E.
       total_oneyear_se, total_ultimate_se, total_reserve
     """
-    cum = _cumulate(np.asarray(incremental, dtype=float))
+    cum = _cumulate(_as_array(incremental))
     I0, J0 = cum.shape
     if I0 != J0:
         raise ValueError(f"Triangle must be square (got {I0}x{J0}); aggregate first.")
@@ -272,7 +279,8 @@ def sensitivity_oneyear(incremental: np.ndarray, sigma_method: str = "loglinear"
     Returns a long DataFrame ranked by absolute change in the total one-year CDR
     S.E., with the change in reserve, ultimate S.E., and emergence factor too.
     """
-    cum = _cumulate(np.asarray(incremental, dtype=float))
+    incremental = _as_array(incremental)
+    cum = _cumulate(incremental)
     I0, J0 = cum.shape
     observed = ~np.isnan(cum)
 

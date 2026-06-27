@@ -421,6 +421,127 @@ Public Sub MW_Sensitivity()
 End Sub
 
 '==============================================================================
+' Macro: batch run from a "setup" sheet
+'
+' The "setup" sheet lists triangles to analyse (headers in row 1, data from
+' row 2):
+'     A: Worksheet  - name of the sheet holding the triangle  (required)
+'     B: Range      - value block, e.g. "C3:L12" (blank = that sheet's UsedRange)
+'     C: Cumulative - "Y"/"N" (default N = incremental)
+'     D: SigmaMethod- "loglinear" (default) or "mack"
+' Writes one comparison row per triangle to "RiskEmergence_Summary": headline
+' figures plus the emergence-by-year pattern. Bad rows are flagged, not fatal.
+'==============================================================================
+Public Sub MW_RunFromSetup()
+    Dim setupWs As Worksheet, tgt As Worksheet, ws As Worksheet
+    Dim lastRow As Long, r As Long, k As Long, total As Long, maxSteps As Long
+    Dim wsName As String, rngStr As String, cumStr As String, sigM As String
+    Dim isCum As Boolean, blk As Range, res As MWResult
+
+    On Error Resume Next
+    Set setupWs = ThisWorkbook.Worksheets("setup")
+    On Error GoTo 0
+    If setupWs Is Nothing Then
+        MsgBox "No worksheet named 'setup' was found.", vbExclamation, "MW_RunFromSetup": Exit Sub
+    End If
+
+    lastRow = setupWs.Cells(setupWs.Rows.Count, 1).End(xlUp).Row
+    If lastRow < 2 Then
+        MsgBox "List the worksheet names in column A of 'setup' (from row 2 down).", _
+               vbExclamation, "MW_RunFromSetup": Exit Sub
+    End If
+    total = lastRow - 1
+
+    Dim names() As String, ns() As Long, reserves() As Double
+    Dim ultSE() As Double, oySE() As Double, ef() As Double, errs() As String, patterns() As Variant
+    ReDim names(1 To total): ReDim ns(1 To total): ReDim reserves(1 To total)
+    ReDim ultSE(1 To total): ReDim oySE(1 To total): ReDim ef(1 To total)
+    ReDim errs(1 To total): ReDim patterns(1 To total)
+
+    k = 0: maxSteps = 0
+    For r = 2 To lastRow
+        wsName = Trim(CStr(setupWs.Cells(r, 1).Value))
+        If wsName <> "" Then
+            k = k + 1
+            names(k) = wsName
+            rngStr = Trim(CStr(setupWs.Cells(r, 2).Value))
+            cumStr = UCase(Trim(CStr(setupWs.Cells(r, 3).Value)))
+            sigM = LCase(Trim(CStr(setupWs.Cells(r, 4).Value)))
+            If sigM = "" Then sigM = "loglinear"
+            isCum = (cumStr = "Y" Or cumStr = "YES" Or cumStr = "TRUE" Or cumStr = "1")
+
+            Set tgt = Nothing
+            On Error Resume Next
+            Set tgt = ThisWorkbook.Worksheets(wsName)
+            On Error GoTo 0
+            If tgt Is Nothing Then
+                errs(k) = "worksheet not found"
+            Else
+                Set blk = Nothing
+                On Error Resume Next
+                If rngStr = "" Then Set blk = tgt.UsedRange Else Set blk = tgt.Range(rngStr)
+                On Error GoTo 0
+                If blk Is Nothing Then
+                    errs(k) = "invalid range '" & rngStr & "'"
+                Else
+                    res = MW_Compute(blk, sigM, 0, 0, isCum)
+                    If Not res.ok Then
+                        errs(k) = res.msg
+                    Else
+                        ns(k) = res.n: reserves(k) = res.totalReserve
+                        ultSE(k) = res.ultimateSE: oySE(k) = res.oneYearSE
+                        ef(k) = res.oneYearSE / res.ultimateSE
+                        patterns(k) = res.patternSE
+                        If res.n - 1 > maxSteps Then maxSteps = res.n - 1
+                    End If
+                End If
+            End If
+        End If
+    Next r
+
+    If k = 0 Then MsgBox "No worksheet names found in 'setup'.", vbExclamation: Exit Sub
+
+    Set ws = MW_FreshSheet("RiskEmergence_Summary")
+    ws.Range("A1").Value = "Risk emergence (analytic Merz-Wuthrich) - batch from 'setup'"
+    ws.Range("A1").Font.Bold = True
+    ws.Cells(3, 1).Value = "Worksheet": ws.Cells(3, 2).Value = "Size n"
+    ws.Cells(3, 3).Value = "Total reserve": ws.Cells(3, 4).Value = "Ultimate SE"
+    ws.Cells(3, 5).Value = "One-year SE": ws.Cells(3, 6).Value = "Emergence factor"
+    ws.Cells(3, 7).Value = "Status"
+    Dim baseCol As Long: baseCol = 8
+    Dim sCol As Long
+    For sCol = 1 To maxSteps
+        ws.Cells(3, baseCol + sCol - 1).Value = "EF Yr" & sCol
+    Next sCol
+    ws.Range(ws.Cells(3, 1), ws.Cells(3, baseCol + maxSteps - 1)).Font.Bold = True
+
+    Dim i As Long, outRow As Long, p As Variant, sIdx As Long
+    outRow = 4
+    For i = 1 To k
+        ws.Cells(outRow, 1).Value = names(i)
+        If errs(i) <> "" Then
+            ws.Cells(outRow, 7).Value = "ERROR: " & errs(i)
+        Else
+            ws.Cells(outRow, 2).Value = ns(i)
+            ws.Cells(outRow, 3).Value = reserves(i)
+            ws.Cells(outRow, 4).Value = ultSE(i)
+            ws.Cells(outRow, 5).Value = oySE(i)
+            ws.Cells(outRow, 6).Value = ef(i): ws.Cells(outRow, 6).NumberFormat = "0.0%"
+            ws.Cells(outRow, 7).Value = "OK"
+            p = patterns(i)
+            For sIdx = 0 To ns(i) - 2
+                ws.Cells(outRow, baseCol + sIdx).Value = p(sIdx) / ultSE(i)
+                ws.Cells(outRow, baseCol + sIdx).NumberFormat = "0.0%"
+            Next sIdx
+        End If
+        outRow = outRow + 1
+    Next i
+    ws.Columns.AutoFit
+    ws.Activate
+    MsgBox "Processed " & k & " worksheet(s) listed in 'setup'.", vbInformation, "MW_RunFromSetup"
+End Sub
+
+'==============================================================================
 ' Self-test: build the GenIns triangle in code and check the answer
 '==============================================================================
 Public Sub MW_SelfTest()

@@ -45,7 +45,27 @@ cumulative rather than incremental).
   (IBNR, one-year CDR SE, ultimate Mack SE), totals, and the emergence pattern.
 - `MW_Sensitivity` - leave-one-out over every age-to-age ratio, ranked by impact
   on the one-year SE - shows which cells/outliers drive (or don't) the risk.
+- `MW_RunFromSetup` - **batch**: reads a `setup` sheet listing many triangles and
+  analyses them all, writing a comparison to `RiskEmergence_Summary`.
 - `MW_SelfTest` - validation against the built-in GenIns reference.
+
+## Batch runs via the `setup` sheet
+
+Create a sheet named `setup` (the demo workbook includes one). Row 1 is headers,
+data from row 2:
+
+| Col | Header | Meaning |
+|---|---|---|
+| A | Worksheet | name of the sheet holding the triangle (required) |
+| B | Range | value block, e.g. `C3:L12` (blank = that sheet's used range) |
+| C | Cumulative | `Y`/`N` (default `N` = incremental) |
+| D | SigmaMethod | `loglinear` (default) or `mack` |
+
+Run `MW_RunFromSetup`. It writes one row per listed worksheet to
+`RiskEmergence_Summary` - size, total reserve, ultimate SE, one-year SE, the
+emergence factor, a status flag, and the emergence-by-year pattern (`EF Yr1`,
+`EF Yr2`, ...). Rows that fail (missing sheet, non-square block) are flagged in
+the Status column rather than stopping the batch.
 
 ## Scope / notes
 

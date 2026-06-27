@@ -47,6 +47,7 @@ DEFAULTS = {
     "development_quarters": None,  # None -> equal to number of accident quarters (square)
     "base_earned_premium": 100_000_000.0,  # annual EP for the MOST RECENT accident year
     "base_loss_ratio": None,      # None -> use benchmark loss_ratio
+    "noise_dist": "lognormal",    # cell process noise: "lognormal" (default) or "gamma"
     "severity_trend": 0.04,       # annual loss severity trend
     "frequency_trend": -0.01,     # annual claim frequency trend
     "premium_trend": 0.03,        # annual earned-premium (rate x exposure) trend
@@ -204,9 +205,16 @@ def simulate_one(cfg: dict, bench: dict, rng: np.random.Generator):
     # Expected incremental losses: outer product of ultimate and development pattern
     means = np.outer(expected_ultimate, pattern)  # shape (Q, D)
 
-    # ODP noise. ODP variance = phi * mean. To keep phi_factor scale-free, anchor
-    # the absolute dispersion to the average cell size, so phi_factor behaves like
-    # a relative-dispersion knob (CoV of the average cell ~ sqrt(phi_factor)).
+    # Process noise. Variance is set proportional to the mean (ODP-style); to keep
+    # phi_factor scale-free, anchor the absolute dispersion to the average cell size,
+    # so phi_factor behaves like a relative-dispersion knob (CoV of the average cell
+    # ~ sqrt(phi_factor)). The cell distribution is lognormal by default (heavier
+    # right tail, always positive) or gamma; both are matched to the same mean and
+    # variance. This is the data-generating choice and is independent of the
+    # bootstrap used later by the reserving code.
+    noise = cfg["noise_dist"]
+    if noise not in ("lognormal", "gamma"):
+        raise ValueError(f"noise_dist must be 'lognormal' or 'gamma', got '{noise}'.")
     avg_mean = means[means > 0].mean()
     phi_abs = bench["phi_factor"] * avg_mean
 
@@ -216,8 +224,15 @@ def simulate_one(cfg: dict, bench: dict, rng: np.random.Generator):
             m = means[aq, dq]
             if m <= 0:
                 continue
-            shape = m / phi_abs       # Gamma(shape=m/phi, scale=phi) -> mean m, var phi*m
-            incremental_full[aq, dq] = rng.gamma(shape, phi_abs)
+            if noise == "gamma":
+                # Gamma(shape=m/phi, scale=phi) -> mean m, var phi*m
+                incremental_full[aq, dq] = rng.gamma(m / phi_abs, phi_abs)
+            else:
+                # Lognormal matched to mean m and variance phi_abs*m
+                var = phi_abs * m
+                sigma2 = np.log1p(var / m**2)
+                mu = np.log(m) - 0.5 * sigma2
+                incremental_full[aq, dq] = rng.lognormal(mu, np.sqrt(sigma2))
 
     # Mask future cells: cell observed if on/above the latest diagonal and within D
     incremental_observed = incremental_full.copy()

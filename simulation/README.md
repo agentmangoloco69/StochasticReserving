@@ -54,7 +54,10 @@ df = simulate(lob="wild", seed=123)
 
 - **Lines of business:** Property, Commercial Auto, General Liability, plus `wild`.
 - **Region:** Canada only.
-- **Noise model:** Over-dispersed Poisson (matches the bootstrap in `../Reserve_Risk`).
+- **Noise model:** variance proportional to the mean (ODP-style), sampled per cell
+  from a **lognormal** (default) or gamma distribution, both matched to the same
+  mean and variance. This is the data-generating choice, independent of the
+  bootstrap the reserving code in `../Reserve_Risk` applies later.
 - **Benchmarks:** Hard-coded from CIA/IBC actuarial literature; live IBC scrape is best-effort and only supplements them.
 
 ## Roadmap (tracked as GitHub issues)

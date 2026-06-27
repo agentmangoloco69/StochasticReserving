@@ -1,4 +1,4 @@
-Attribute VB_Name = "MerzWuthrich"
+' Attribute VB_Name = "MerzWuthrich"
 '==============================================================================
 ' Merz-Wuthrich (2008) one-year Claims Development Result - ANALYTIC, in VBA
 '
@@ -16,11 +16,13 @@ Attribute VB_Name = "MerzWuthrich"
 '        your block holds cumulative figures instead.
 '
 ' Cell functions (UDFs):
-'     =MW_EmergenceFactor(range, [sigmaMethod], [isCumulative])
-'     =MW_OneYearSE(range, [sigmaMethod], [isCumulative])
-'     =MW_UltimateSE(range, [sigmaMethod], [isCumulative])
-'     =MW_TotalReserve(range, [isCumulative])
+'     =MW_EmergenceFactor(range, [sigmaMethod], [isCumulative], [excludeFirstDev])
+'     =MW_OneYearSE(range, [sigmaMethod], [isCumulative], [excludeFirstDev])
+'     =MW_UltimateSE(range, [sigmaMethod], [isCumulative], [excludeFirstDev])
+'     =MW_TotalReserve(range, [isCumulative], [excludeFirstDev])
 '   sigmaMethod = "loglinear" (default, matches R ChainLadder) or "mack".
+'   excludeFirstDev = TRUE drops the first development column and the immature
+'     most-recent accident year (useful for long-tail lines like GL).
 '
 ' Macros:
 '     MW_Report       - writes per-AY table + totals + emergence pattern
@@ -49,7 +51,8 @@ End Type
 '------------------------------------------------------------------------------
 Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, _
                             ByVal exI As Long, ByVal exJ As Long, _
-                            ByVal isCumulative As Boolean) As MWResult
+                            ByVal isCumulative As Boolean, _
+                            ByVal excludeFirstDev As Boolean) As MWResult
     Dim res As MWResult
     Dim nR As Long, nC As Long, n As Long, i As Long, j As Long, k As Long, s As Long, c2 As Long, L As Long, cs As Long
     Dim raw As Variant
@@ -73,6 +76,35 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, _
             End If
         Next j
     Next i
+
+    ' --- optionally drop the first development column (and the immature most-recent
+    '     accident year): merge DP1 dollars into DP2, then shift; used for long-tail
+    '     lines like GL where the first column would skew the result ---
+    If excludeFirstDev Then
+        If n < 3 Then
+            res.ok = False: res.msg = "exclude_first_dev needs at least a 3x3 triangle."
+            MW_Compute = res: Exit Function
+        End If
+        Dim nn As Long: nn = n - 1
+        Dim rInc() As Double, rObs() As Boolean, jp As Long
+        ReDim rInc(1 To nn, 1 To nn): ReDim rObs(1 To nn, 1 To nn)
+        For i = 1 To nn
+            For jp = 1 To nn
+                If jp = 1 And Not isCumulative Then          ' merge DP1 + DP2 incrementals
+                    If Obs(i, 1) And Obs(i, 2) Then
+                        rInc(i, 1) = Inc(i, 1) + Inc(i, 2): rObs(i, 1) = True
+                    ElseIf Obs(i, 2) Then
+                        rInc(i, 1) = Inc(i, 2): rObs(i, 1) = True
+                    End If
+                Else                                         ' shift columns left by one
+                    If Obs(i, jp + 1) Then
+                        rInc(i, jp) = Inc(i, jp + 1): rObs(i, jp) = True
+                    End If
+                End If
+            Next jp
+        Next i
+        n = nn: Inc = rInc: Obs = rObs
+    End If
 
     ' --- cumulative triangle (over the observed contiguous prefix of each row) ---
     Dim Cum() As Double: ReDim Cum(1 To n, 1 To n)
@@ -280,28 +312,32 @@ End Function
 ' Cell UDFs
 '==============================================================================
 Public Function MW_EmergenceFactor(rng As Range, Optional sigmaMethod As String = "loglinear", _
-                                   Optional isCumulative As Boolean = False) As Variant
-    Dim r As MWResult: r = MW_Compute(rng, sigmaMethod, 0, 0, isCumulative)
+                                   Optional isCumulative As Boolean = False, _
+                                   Optional excludeFirstDev As Boolean = False) As Variant
+    Dim r As MWResult: r = MW_Compute(rng, sigmaMethod, 0, 0, isCumulative, excludeFirstDev)
     If Not r.ok Then MW_EmergenceFactor = r.msg: Exit Function
     MW_EmergenceFactor = r.oneYearSE / r.ultimateSE
 End Function
 
 Public Function MW_OneYearSE(rng As Range, Optional sigmaMethod As String = "loglinear", _
-                             Optional isCumulative As Boolean = False) As Variant
-    Dim r As MWResult: r = MW_Compute(rng, sigmaMethod, 0, 0, isCumulative)
+                             Optional isCumulative As Boolean = False, _
+                             Optional excludeFirstDev As Boolean = False) As Variant
+    Dim r As MWResult: r = MW_Compute(rng, sigmaMethod, 0, 0, isCumulative, excludeFirstDev)
     If Not r.ok Then MW_OneYearSE = r.msg: Exit Function
     MW_OneYearSE = r.oneYearSE
 End Function
 
 Public Function MW_UltimateSE(rng As Range, Optional sigmaMethod As String = "loglinear", _
-                              Optional isCumulative As Boolean = False) As Variant
-    Dim r As MWResult: r = MW_Compute(rng, sigmaMethod, 0, 0, isCumulative)
+                              Optional isCumulative As Boolean = False, _
+                              Optional excludeFirstDev As Boolean = False) As Variant
+    Dim r As MWResult: r = MW_Compute(rng, sigmaMethod, 0, 0, isCumulative, excludeFirstDev)
     If Not r.ok Then MW_UltimateSE = r.msg: Exit Function
     MW_UltimateSE = r.ultimateSE
 End Function
 
-Public Function MW_TotalReserve(rng As Range, Optional isCumulative As Boolean = False) As Variant
-    Dim r As MWResult: r = MW_Compute(rng, "loglinear", 0, 0, isCumulative)
+Public Function MW_TotalReserve(rng As Range, Optional isCumulative As Boolean = False, _
+                                Optional excludeFirstDev As Boolean = False) As Variant
+    Dim r As MWResult: r = MW_Compute(rng, "loglinear", 0, 0, isCumulative, excludeFirstDev)
     If Not r.ok Then MW_TotalReserve = r.msg: Exit Function
     MW_TotalReserve = r.totalReserve
 End Function
@@ -310,14 +346,16 @@ End Function
 ' Macro: full report (per-AY table + totals + emergence pattern)
 '==============================================================================
 Public Sub MW_Report()
-    Dim rng As Range, isCum As Boolean, r As MWResult, ws As Worksheet, i As Long, s As Long, rowOut As Long
+    Dim rng As Range, isCum As Boolean, exclFirst As Boolean, r As MWResult, ws As Worksheet, i As Long, s As Long, rowOut As Long
     On Error Resume Next
     Set rng = Application.InputBox("Select the SQUARE incremental triangle value block (no labels):", "MW Report", Type:=8)
     On Error GoTo 0
     If rng Is Nothing Then Exit Sub
     isCum = (MsgBox("Is the selected block CUMULATIVE? (No = incremental)", vbYesNo + vbQuestion, "Orientation") = vbYes)
+    exclFirst = (MsgBox("Exclude the first development column (and the immature most-recent accident year)?", _
+                        vbYesNo + vbQuestion, "Exclude first dev") = vbYes)
 
-    r = MW_Compute(rng, "loglinear", 0, 0, isCum)
+    r = MW_Compute(rng, "loglinear", 0, 0, isCum, exclFirst)
     If Not r.ok Then MsgBox r.msg, vbExclamation: Exit Sub
 
     Set ws = MW_FreshSheet("MW_Results")
@@ -366,15 +404,17 @@ End Sub
 ' Macro: leave-one-out outlier sensitivity (impact on the one-year SE)
 '==============================================================================
 Public Sub MW_Sensitivity()
-    Dim rng As Range, isCum As Boolean, base As MWResult, alt As MWResult
+    Dim rng As Range, isCum As Boolean, exclFirst As Boolean, base As MWResult, alt As MWResult
     Dim n As Long, i As Long, j As Long, raw As Variant, ws As Worksheet, rowOut As Long
     On Error Resume Next
     Set rng = Application.InputBox("Select the SQUARE incremental triangle value block (no labels):", "MW Sensitivity", Type:=8)
     On Error GoTo 0
     If rng Is Nothing Then Exit Sub
     isCum = (MsgBox("Is the selected block CUMULATIVE? (No = incremental)", vbYesNo + vbQuestion, "Orientation") = vbYes)
+    exclFirst = (MsgBox("Exclude the first development column (and the immature most-recent accident year)?", _
+                        vbYesNo + vbQuestion, "Exclude first dev") = vbYes)
 
-    base = MW_Compute(rng, "loglinear", 0, 0, isCum)
+    base = MW_Compute(rng, "loglinear", 0, 0, isCum, exclFirst)
     If Not base.ok Then MsgBox base.msg, vbExclamation: Exit Sub
     n = base.n
     raw = rng.Value
@@ -397,7 +437,7 @@ Public Sub MW_Sensitivity()
     For i = 1 To n
         For j = 1 To n - 1
             If i <= n - j And colCnt(j) > 1 Then
-                alt = MW_Compute(rng, "loglinear", i, j, isCum)
+                alt = MW_Compute(rng, "loglinear", i, j, isCum, exclFirst)
                 If alt.ok Then
                     ws.Cells(rowOut, 1).Value = i
                     ws.Cells(rowOut, 2).Value = j
@@ -435,8 +475,8 @@ End Sub
 Public Sub MW_RunFromSetup()
     Dim setupWs As Worksheet, tgt As Worksheet, ws As Worksheet
     Dim lastRow As Long, r As Long, k As Long, total As Long, maxSteps As Long
-    Dim wsName As String, rngStr As String, cumStr As String, sigM As String
-    Dim isCum As Boolean, blk As Range, res As MWResult
+    Dim wsName As String, rngStr As String, cumStr As String, sigM As String, exclStr As String
+    Dim isCum As Boolean, exclFirst As Boolean, blk As Range, res As MWResult
 
     On Error Resume Next
     Set setupWs = ThisWorkbook.Worksheets("setup")
@@ -468,7 +508,9 @@ Public Sub MW_RunFromSetup()
             cumStr = UCase(Trim(CStr(setupWs.Cells(r, 3).Value)))
             sigM = LCase(Trim(CStr(setupWs.Cells(r, 4).Value)))
             If sigM = "" Then sigM = "loglinear"
+            exclStr = UCase(Trim(CStr(setupWs.Cells(r, 5).Value)))
             isCum = (cumStr = "Y" Or cumStr = "YES" Or cumStr = "TRUE" Or cumStr = "1")
+            exclFirst = (exclStr = "Y" Or exclStr = "YES" Or exclStr = "TRUE" Or exclStr = "1")
 
             Set tgt = Nothing
             On Error Resume Next
@@ -484,7 +526,7 @@ Public Sub MW_RunFromSetup()
                 If blk Is Nothing Then
                     errs(k) = "invalid range '" & rngStr & "'"
                 Else
-                    res = MW_Compute(blk, sigM, 0, 0, isCum)
+                    res = MW_Compute(blk, sigM, 0, 0, isCum, exclFirst)
                     If Not res.ok Then
                         errs(k) = res.msg
                     Else
@@ -646,7 +688,7 @@ Public Sub MW_SelfTest()
             End If
         Next j
     Next i
-    r = MW_Compute(ws.Range(ws.Cells(1, 1), ws.Cells(10, 10)), "loglinear", 0, 0, False)
+    r = MW_Compute(ws.Range(ws.Cells(1, 1), ws.Cells(10, 10)), "loglinear", 0, 0, False, False)
     Dim okOY As Boolean, okUL As Boolean
     okOY = Abs(r.oneYearSE - 1774013.8) < 1#
     okUL = Abs(r.ultimateSE - 2441364.1) < 1#

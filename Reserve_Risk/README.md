@@ -14,6 +14,7 @@
 - Both return the same headline keys (`emergence_factor`, `total_oneyear_se`, `total_ultimate_se`, `total_reserve`, `emergence_pattern`, `detail`), so you can switch methods freely.
 - Annual x annual; pass `--periodicity quarterly` to aggregate a quarterly triangle first (a partially developed most-recent year is dropped).
 - `--sensitivity` (analytic) runs a leave-one-out over every age-to-age ratio to show which cells/outliers move the one-year risk the most (and which barely touch the emergence factor).
+- `exclude_first_dev=True` (CLI `--exclude-first-dev`) drops the first development column and the immature most-recent accident year - useful for long-tail lines like GL where the volatile first column would skew the result. DP1 dollars are kept (folded into DP2); only the first development step and the one-point latest year are removed. Works for both methods.
 - Python API: `from risk_emergence import risk_emergence, to_triangle` then `risk_emergence(tri)` / `risk_emergence(tri, method="simulation")`.
 - **Portfolio aggregation:** `portfolio_emergence(results, rho=0.25)` combines several LoBs into one portfolio emergence factor. Emergence factors are ratios of SDs, so it aggregates the dollar SEs with a single correlation `rho` (same matrix for both horizons, so `rho` largely cancels and the factor is robust) and reports independence/full-correlation bookends. Single `rho` in v1; full correlation matrix tracked in issue #5.
 - Examples:

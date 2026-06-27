@@ -55,6 +55,26 @@ def _as_array(x) -> np.ndarray:
     return np.asarray(x, dtype=float)
 
 
+def drop_first_dev(incremental) -> np.ndarray:
+    """
+    Remove the first development column from an incremental triangle, for lines
+    where the first column (and the one-point most-recent accident year) would
+    skew the result - e.g. long-tail GL.
+
+    The first development period's DOLLARS are kept (folded into the new first
+    column = DP1 + DP2 cumulative); only the first development *step* (factor f1
+    and its variance) and the immature most-recent accident year are removed.
+    Returns a smaller (n-1 x n-1) incremental triangle.
+    """
+    a = _as_array(incremental)
+    n = a.shape[0]
+    if n < 3:
+        raise ValueError("exclude_first_dev needs at least a 3x3 triangle.")
+    red = a[:-1, 1:].astype(float).copy()      # drop last accident year and DP1 column
+    red[:, 0] = red[:, 0] + a[:-1, 0]          # fold DP1 dollars into the new first column
+    return red
+
+
 def _cumulate(incremental: np.ndarray) -> np.ndarray:
     """Row-wise cumulative sum, preserving NaN (unobserved) cells."""
     cum = np.full_like(incremental, np.nan, dtype=float)
@@ -221,7 +241,7 @@ def _cl_mseps(clq: dict, I0: int, J0: int):
 # ---------------------------------------------------------------------------
 
 def merz_wuthrich(incremental: np.ndarray, weight_mask: np.ndarray | None = None,
-                  sigma_method: str = "loglinear") -> dict:
+                  sigma_method: str = "loglinear", exclude_first_dev: bool = False) -> dict:
     """
     Analytic one-year (Merz-Wuthrich) and ultimate (Mack) reserve uncertainty.
 
@@ -233,7 +253,10 @@ def merz_wuthrich(incremental: np.ndarray, weight_mask: np.ndarray | None = None
                         ratio of the ultimate S.E.
       total_oneyear_se, total_ultimate_se, total_reserve
     """
-    cum = _cumulate(_as_array(incremental))
+    arr = _as_array(incremental)
+    if exclude_first_dev:
+        arr = drop_first_dev(arr)
+    cum = _cumulate(arr)
     I0, J0 = cum.shape
     if I0 != J0:
         raise ValueError(f"Triangle must be square (got {I0}x{J0}); aggregate first.")
@@ -271,7 +294,8 @@ def merz_wuthrich(incremental: np.ndarray, weight_mask: np.ndarray | None = None
     }
 
 
-def sensitivity_oneyear(incremental: np.ndarray, sigma_method: str = "loglinear") -> pd.DataFrame:
+def sensitivity_oneyear(incremental: np.ndarray, sigma_method: str = "loglinear",
+                        exclude_first_dev: bool = False) -> pd.DataFrame:
     """
     Leave-one-out sensitivity: exclude each observed age-to-age ratio in turn and
     recompute, to find cells whose removal moves the one-year risk the most.
@@ -280,6 +304,8 @@ def sensitivity_oneyear(incremental: np.ndarray, sigma_method: str = "loglinear"
     S.E., with the change in reserve, ultimate S.E., and emergence factor too.
     """
     incremental = _as_array(incremental)
+    if exclude_first_dev:
+        incremental = drop_first_dev(incremental)
     cum = _cumulate(incremental)
     I0, J0 = cum.shape
     observed = ~np.isnan(cum)
@@ -337,6 +363,9 @@ def main():
     parser.add_argument("--sigma-method", default="loglinear", choices=["loglinear", "mack"],
                         help="Tail-sigma extrapolation: loglinear (matches R ChainLadder, "
                              "default) or mack (classic Mack min rule / this repo's bootstrap).")
+    parser.add_argument("--exclude-first-dev", action="store_true",
+                        help="Drop the first development column (and the immature most-recent "
+                             "accident year); useful for long-tail lines like GL.")
     parser.add_argument("--sensitivity", action="store_true",
                         help="Also run leave-one-out outlier sensitivity.")
     parser.add_argument("--top", type=int, default=10, help="Sensitivity rows to show.")
@@ -344,7 +373,8 @@ def main():
     args = parser.parse_args()
 
     incremental = pd.read_csv(args.triangle, index_col=0).to_numpy(dtype=float)
-    res = merz_wuthrich(incremental, sigma_method=args.sigma_method)
+    res = merz_wuthrich(incremental, sigma_method=args.sigma_method,
+                        exclude_first_dev=args.exclude_first_dev)
 
     print(f"Total reserve      : {res['total_reserve']:,.0f}")
     print(f"Ultimate (Mack) SE : {res['total_ultimate_se']:,.0f}")
@@ -360,7 +390,8 @@ def main():
     if args.sensitivity:
         print("\n" + "=" * 60)
         print("Leave-one-out sensitivity (largest impact on one-year SE):")
-        sens = sensitivity_oneyear(incremental, sigma_method=args.sigma_method)
+        sens = sensitivity_oneyear(incremental, sigma_method=args.sigma_method,
+                                   exclude_first_dev=args.exclude_first_dev)
         money = lambda x: f"{x:,.0f}"
         formatters = {
             "d_oneyear_SE": money, "d_ultimate_SE": money, "d_reserve": money,

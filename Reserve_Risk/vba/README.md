@@ -36,8 +36,11 @@ Point them at the **value block only** (no AY/DY labels), e.g. `C3:L12`:
 ```
 
 Optional arguments: `sigmaMethod` (`"loglinear"` default, matches R ChainLadder;
-or `"mack"`), and `isCumulative` (`False` default; set `True` if the block is
-cumulative rather than incremental).
+or `"mack"`), `isCumulative` (`False` default; set `True` if the block is
+cumulative rather than incremental), and `excludeFirstDev` (`False` default; set
+`True` to drop the first development column and the immature most-recent accident
+year - useful for long-tail lines like GL where the first column would skew the
+result). The first development period's dollars are kept (folded into DP2).
 
 ## Macros (`Alt+F8`)
 
@@ -77,6 +80,7 @@ data from row 2:
 | B | Range | value block, e.g. `C3:L12` (blank = that sheet's used range) |
 | C | Cumulative | `Y`/`N` (default `N` = incremental) |
 | D | SigmaMethod | `loglinear` (default) or `mack` |
+| E | ExcludeFirstDev | `Y`/`N` (default `N`); drop first dev column + immature recent AY |
 
 Run `MW_RunFromSetup`. It writes one row per listed worksheet to
 `RiskEmergence_Summary` - size, total reserve, ultimate SE, one-year SE, the

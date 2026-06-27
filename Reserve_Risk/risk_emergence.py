@@ -110,8 +110,10 @@ def _as_array(x) -> np.ndarray:
 # The two engines
 # ---------------------------------------------------------------------------
 
-def _emergence_analytic(triangle, sigma_method: str = "loglinear") -> dict:
-    res = mw.merz_wuthrich(triangle, sigma_method=sigma_method)
+def _emergence_analytic(triangle, sigma_method: str = "loglinear",
+                        exclude_first_dev: bool = False) -> dict:
+    res = mw.merz_wuthrich(triangle, sigma_method=sigma_method,
+                           exclude_first_dev=exclude_first_dev)
     return {
         "method": "analytic",
         "emergence_factor": res["emergence_factor"],
@@ -125,8 +127,10 @@ def _emergence_analytic(triangle, sigma_method: str = "loglinear") -> dict:
 
 def _emergence_simulation(triangle, model="Mack", iterations=10000, seed=101,
                           bootstrap_dist="Gamma", forecast_dist="Gamma",
-                          var_p=0.995) -> dict:
+                          var_p=0.995, exclude_first_dev=False) -> dict:
     incremental = _as_array(triangle)
+    if exclude_first_dev:
+        incremental = mw.drop_first_dev(incremental)
     cumulative = srf.Cumulatives(incremental)
 
     bstrap = srf.Run_Bootstrap(
@@ -180,7 +184,7 @@ def _emergence_simulation(triangle, model="Mack", iterations=10000, seed=101,
 # ---------------------------------------------------------------------------
 
 def risk_emergence(triangle, method: str = "analytic", *,
-                   sigma_method: str = "loglinear",
+                   sigma_method: str = "loglinear", exclude_first_dev: bool = False,
                    model: str = "Mack", iterations: int = 10000, seed: int = 101,
                    bootstrap_dist: str = "Gamma", forecast_dist: str = "Gamma",
                    var_p: float = 0.995) -> dict:
@@ -198,11 +202,13 @@ def risk_emergence(triangle, method: str = "analytic", *,
     total_ultimate_se, total_reserve, emergence_pattern (per future year), detail.
     """
     if method == "analytic":
-        return _emergence_analytic(triangle, sigma_method=sigma_method)
+        return _emergence_analytic(triangle, sigma_method=sigma_method,
+                                   exclude_first_dev=exclude_first_dev)
     if method == "simulation":
         return _emergence_simulation(triangle, model=model, iterations=iterations,
                                      seed=seed, bootstrap_dist=bootstrap_dist,
-                                     forecast_dist=forecast_dist, var_p=var_p)
+                                     forecast_dist=forecast_dist, var_p=var_p,
+                                     exclude_first_dev=exclude_first_dev)
     raise ValueError(f"method must be 'analytic' or 'simulation', got '{method}'.")
 
 
@@ -281,6 +287,9 @@ def main():
                         help="analytic (Merz-Wuthrich, default) or simulation (bootstrap + CDR).")
     parser.add_argument("--periodicity", default="annual", choices=["annual", "quarterly"],
                         help="If 'quarterly', aggregate 4x4 blocks to annual first.")
+    parser.add_argument("--exclude-first-dev", action="store_true",
+                        help="Drop the first development column and the immature most-recent "
+                             "accident year (useful for long-tail lines like GL).")
     # analytic options
     parser.add_argument("--sigma-method", default="loglinear", choices=["loglinear", "mack"],
                         help="[analytic] tail-sigma extrapolation.")
@@ -305,6 +314,7 @@ def main():
 
     res = risk_emergence(
         incremental, method=args.method, sigma_method=args.sigma_method,
+        exclude_first_dev=args.exclude_first_dev,
         model=args.model, iterations=args.iterations, seed=args.seed,
         bootstrap_dist=args.bootstrap_dist, forecast_dist=args.forecast_dist, var_p=args.var_p,
     )
@@ -325,7 +335,8 @@ def main():
     if args.sensitivity and res["method"] == "analytic":
         print("\n" + "=" * 60)
         print("Leave-one-out sensitivity (largest impact on one-year SE):")
-        sens = mw.sensitivity_oneyear(incremental, sigma_method=args.sigma_method)
+        sens = mw.sensitivity_oneyear(incremental, sigma_method=args.sigma_method,
+                                      exclude_first_dev=args.exclude_first_dev)
         money = lambda x: f"{x:,.0f}"
         formatters = {"d_oneyear_SE": money, "d_ultimate_SE": money, "d_reserve": money,
                       "d_emergence_factor": lambda x: f"{x:+.3f}"}

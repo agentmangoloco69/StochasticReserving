@@ -103,9 +103,12 @@ the Status column rather than stopping the batch.
 - **Analytic only.** The simulation/bootstrap method is not ported - VBA's RNG
   and 10k-iteration cost make it impractical. For full tails/VaR use the Python
   `risk_emergence(..., method="simulation")`.
-- Input must be a **square** triangle (annual x annual); aggregate quarterly
-  data to annual first.
+- Input is an annual triangle, **square or with more accident years than
+  development periods** (e.g. 22 accident years x 20 development periods);
+  aggregate quarterly data to annual first. Flat / fully-developed tail columns
+  (zero variance) and large values are handled.
 - The numerical algorithm was validated to match the Python/R reference exactly
-  via a line-for-line transcription; `MW_SelfTest` re-checks it inside Excel.
+  (square, non-square, and flat-tail cases) via a line-for-line transcription;
+  `MW_SelfTest` re-checks it inside Excel.
 - Assumptions are Mack's (chain ladder correct, accident years independent,
   variance proportional to cumulative, no tail beyond the triangle).

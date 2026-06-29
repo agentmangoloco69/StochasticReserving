@@ -23,7 +23,8 @@ Assumptions (these are Mack's model assumptions - read before trusting output):
   3. Var(C_{i,j+1} | C_{i,j}) = sigma_j^2 * C_{i,j}  (variance proportional to
      the cumulative, i.e. volume-weighted / alpha = 1). This is the ONLY case
      the Merz-Wuthrich formulae cover.
-  4. No tail beyond the triangle (square triangle; ultimate at the last column).
+  4. No tail beyond the triangle (ultimate at the last development column). The
+     triangle may be square or have more accident years than development periods.
 A consequence of (1) is that a single unusual cell feeds BOTH the factor f_j and
 the variance sigma_j^2 for its column, so outliers can move the answer a lot -
 use sensitivity_oneyear() to see which ones.
@@ -111,7 +112,7 @@ def _chain_ladder(cum: np.ndarray, weight_mask: np.ndarray | None = None,
     n = cum.shape[1]
     observed = ~np.isnan(cum)
     if weight_mask is None:
-        weight_mask = np.ones((n, n))
+        weight_mask = np.ones(cum.shape)   # accident years x development periods
 
     f = np.ones(n - 1)
     sigma2 = np.full(n - 1, np.nan)
@@ -133,18 +134,24 @@ def _chain_ladder(cum: np.ndarray, weight_mask: np.ndarray | None = None,
             sigma2[j] = ss / (m - 1)
 
     # Extrapolate any unestimable sigma^2 (typically just the last column).
+    # Only POSITIVE-variance columns inform the log-linear fit (flat/zero-variance
+    # tail columns would make log(sigma) undefined); zero-variance columns keep 0.
     est = [j for j in range(n - 1) if not np.isnan(sigma2[j]) and sigma2[j] > 0]
     missing = [j for j in range(n - 1) if np.isnan(sigma2[j])]
+    filled = False
     if missing and sigma_method == "loglinear" and len(est) >= 2:
         b, a = np.polyfit(np.array(est) + 1, np.log(np.sqrt([sigma2[j] for j in est])), 1)
-        for j in missing:
-            sigma2[j] = float(np.exp(a + b * (j + 1)) ** 2)
-    else:
+        vals = {j: float(np.exp(a + b * (j + 1)) ** 2) for j in missing}
+        if all(np.isfinite(v) for v in vals.values()):   # guard against overflow
+            for j, v in vals.items():
+                sigma2[j] = v
+            filled = True
+    if not filled:
         for j in sorted(missing):       # Mack's min rule (and loglinear fallback)
             if j >= 2 and sigma2[j - 1] > 0 and sigma2[j - 2] > 0:
                 sigma2[j] = min(sigma2[j - 1] ** 2 / sigma2[j - 2],
                                 sigma2[j - 1], sigma2[j - 2])
-            elif j >= 1 and not np.isnan(sigma2[j - 1]):
+            elif j >= 1 and not np.isnan(sigma2[j - 1]) and sigma2[j - 1] > 0:
                 sigma2[j] = sigma2[j - 1]
             else:
                 sigma2[j] = 0.0
@@ -167,8 +174,9 @@ def _chain_ladder(cum: np.ndarray, weight_mask: np.ndarray | None = None,
         latest[j] = cum[diag_i, j] if 0 <= diag_i < cum.shape[0] else 0.0
     alpha = np.where(colsum > 0, latest / colsum, 0.0)
 
+    ratio = np.divide(sigma2, f**2, out=np.zeros_like(sigma2), where=f != 0)
     return {"f": f, "sigma2": sigma2, "full": full, "S": S, "alpha": alpha,
-            "ratio": sigma2 / f**2, "ultimate": full[:, -1]}
+            "ratio": ratio, "ultimate": full[:, -1]}
 
 
 # ---------------------------------------------------------------------------
@@ -258,8 +266,9 @@ def merz_wuthrich(incremental: np.ndarray, weight_mask: np.ndarray | None = None
         arr = drop_first_dev(arr)
     cum = _cumulate(arr)
     I0, J0 = cum.shape
-    if I0 != J0:
-        raise ValueError(f"Triangle must be square (got {I0}x{J0}); aggregate first.")
+    if J0 > I0:
+        raise ValueError(f"Need at least as many accident years as development "
+                         f"periods (got {I0} accident years x {J0} development).")
 
     clq = _chain_ladder(cum, weight_mask, sigma_method)
     reserve, cdr_msep, total_cdr_msep = _cl_mseps(clq, I0, J0)
@@ -332,7 +341,7 @@ def sensitivity_oneyear(incremental: np.ndarray, sigma_method: str = "loglinear"
             # the development factor unestimable and the result undefined)
             if col_ratio_count[j] <= 1:
                 continue
-            mask = np.ones((J0, J0))
+            mask = np.ones((I0, J0))
             mask[i, j] = 0
             try:
                 alt = merz_wuthrich(incremental, weight_mask=mask, sigma_method=sigma_method)

@@ -5,8 +5,9 @@
 '   2. Paste EVERYTHING below this header into the code window
 '   3. File > Save As > Excel Macro-Enabled Workbook (*.xlsm)
 '   4. Run MW_SelfTest (Alt+F8) - it should report PASS
-' To analyse your triangles: build a "setup" sheet and run MW_RunFromSetup.
-' For a single triangle, run MW_Report.
+' Handles non-square triangles (more accident years than development periods)
+' and flat/zero-variance tail columns. Build a "setup" sheet and run
+' MW_RunFromSetup; for a single triangle run MW_Report.
 ' Generated from MerzWuthrich.bas (kept in sync).
 ' ============================================================
 
@@ -55,7 +56,8 @@ Option Explicit
 Option Base 1
 
 Public Type MWResult
-    n As Long
+    n As Long      ' number of development periods (pattern length = n - 1)
+    nA As Long     ' number of accident years (rows)
     oneYearSE As Double
     ultimateSE As Double
     totalReserve As Double
@@ -72,27 +74,34 @@ End Type
 ' sensitivity macro. Returns all headline figures + per-AY and pattern arrays.
 '------------------------------------------------------------------------------
 Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI As Long, ByVal exJ As Long, ByVal isCumulative As Boolean, ByVal excludeFirstDev As Boolean) As MWResult
+    ' nA = accident years (rows), nD = development periods (columns). Handles
+    ' non-square triangles where nA >= nD (e.g. more accident years than dev periods).
     Dim res As MWResult
-    Dim nR As Long, nC As Long, n As Long
-    Dim i As Long, j As Long, k As Long, s As Long, c2 As Long, L As Long, cs As Long
+    Dim nA As Long, nD As Long
+    Dim i As Long, j As Long, k As Long, s As Long, c2 As Long, L As Long, cs As Long, firstActive As Long
     Dim raw As Variant
 
-    nR = rng.Rows.Count
-    nC = rng.Columns.Count
-    If nR <> nC Or nR < 2 Then
+    nA = rng.Rows.Count
+    nD = rng.Columns.Count
+    If nA < 2 Or nD < 2 Then
         res.ok = False
-        res.msg = "Triangle range must be square and at least 2x2."
+        res.msg = "Triangle must be at least 2x2."
         MW_Compute = res
         Exit Function
     End If
-    n = nR
+    If nD > nA Then
+        res.ok = False
+        res.msg = "Need at least as many accident years (rows) as development periods (columns)."
+        MW_Compute = res
+        Exit Function
+    End If
     raw = rng.Value
 
     ' --- observed flags and incremental values ---
-    Dim Obs() As Boolean: ReDim Obs(1 To n, 1 To n)
-    Dim Inc() As Double: ReDim Inc(1 To n, 1 To n)
-    For i = 1 To n
-        For j = 1 To n
+    Dim Obs() As Boolean: ReDim Obs(1 To nA, 1 To nD)
+    Dim Inc() As Double: ReDim Inc(1 To nA, 1 To nD)
+    For i = 1 To nA
+        For j = 1 To nD
             If Not IsEmpty(raw(i, j)) Then
                 If IsNumeric(raw(i, j)) Then
                     Obs(i, j) = True
@@ -105,18 +114,20 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
     ' --- optionally drop the first development column (and the immature most-recent
     '     accident year): merge DP1 dollars into DP2, then shift left ---
     If excludeFirstDev Then
-        If n < 3 Then
+        If nA < 3 Or nD < 3 Then
             res.ok = False
             res.msg = "excludeFirstDev needs at least a 3x3 triangle."
             MW_Compute = res
             Exit Function
         End If
-        Dim nRed As Long: nRed = n - 1
-        Dim rInc() As Double, rObs() As Boolean, jp As Long
-        ReDim rInc(1 To nRed, 1 To nRed)
-        ReDim rObs(1 To nRed, 1 To nRed)
-        For i = 1 To nRed
-            For jp = 1 To nRed
+        Dim aRed As Long, dRed As Long, jp As Long
+        aRed = nA - 1
+        dRed = nD - 1
+        Dim rInc() As Double, rObs() As Boolean
+        ReDim rInc(1 To aRed, 1 To dRed)
+        ReDim rObs(1 To aRed, 1 To dRed)
+        For i = 1 To aRed
+            For jp = 1 To dRed
                 If jp = 1 And Not isCumulative Then
                     If Obs(i, 1) And Obs(i, 2) Then
                         rInc(i, 1) = Inc(i, 1) + Inc(i, 2)
@@ -133,18 +144,19 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
                 End If
             Next jp
         Next i
-        n = nRed
+        nA = aRed
+        nD = dRed
         Inc = rInc
         Obs = rObs
     End If
 
     ' --- cumulative triangle (over the observed contiguous prefix of each row) ---
-    Dim Cum() As Double: ReDim Cum(1 To n, 1 To n)
-    Dim CObs() As Boolean: ReDim CObs(1 To n, 1 To n)
+    Dim Cum() As Double: ReDim Cum(1 To nA, 1 To nD)
+    Dim CObs() As Boolean: ReDim CObs(1 To nA, 1 To nD)
     Dim running As Double
-    For i = 1 To n
+    For i = 1 To nA
         running = 0#
-        For j = 1 To n
+        For j = 1 To nD
             If Not Obs(i, j) Then Exit For
             If isCumulative Then
                 Cum(i, j) = Inc(i, j)
@@ -156,15 +168,15 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         Next j
     Next i
 
-    ' --- development factors f(j), variance sig2(j), denominator Svol(j) ---
-    Dim f() As Double: ReDim f(1 To n - 1)
-    Dim sig2() As Double: ReDim sig2(1 To n - 1)
-    Dim hasSig() As Boolean: ReDim hasSig(1 To n - 1)
-    Dim Svol() As Double: ReDim Svol(1 To n - 1)
+    ' --- development factors f(j), variance sig2(j), denominator Svol(j)  (j = 1..nD-1) ---
+    Dim f() As Double: ReDim f(1 To nD - 1)
+    Dim sig2() As Double: ReDim sig2(1 To nD - 1)
+    Dim hasSig() As Boolean: ReDim hasSig(1 To nD - 1)
+    Dim Svol() As Double: ReDim Svol(1 To nD - 1)
     Dim num As Double, den As Double, cnt As Long, ssq As Double
-    For j = 1 To n - 1
+    For j = 1 To nD - 1
         num = 0#: den = 0#: cnt = 0
-        For i = 1 To n
+        For i = 1 To nA
             If CObs(i, j) And CObs(i, j + 1) And Not (i = exI And j = exJ) Then
                 num = num + Cum(i, j + 1)
                 den = den + Cum(i, j)
@@ -175,7 +187,7 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         Svol(j) = den
         If cnt >= 2 Then
             ssq = 0#
-            For i = 1 To n
+            For i = 1 To nA
                 If CObs(i, j) And CObs(i, j + 1) And Not (i = exI And j = exJ) Then
                     ssq = ssq + Cum(i, j) * (Cum(i, j + 1) / Cum(i, j) - f(j)) ^ 2
                 End If
@@ -185,19 +197,22 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         End If
     Next j
 
-    ' --- extrapolate any missing sig2 (typically the last column) ---
-    Dim estCount As Long: estCount = 0
-    For j = 1 To n - 1
-        If hasSig(j) Then estCount = estCount + 1
+    ' --- extrapolate missing sig2. Log-linear fit uses only POSITIVE-variance
+    '     columns (flat/zero-variance tail columns keep 0 and would break Log()),
+    '     and is overflow-guarded; otherwise Mack's min rule. ---
+    Dim posCount As Long: posCount = 0
+    For j = 1 To nD - 1
+        If hasSig(j) And sig2(j) > 0 Then posCount = posCount + 1
     Next j
     Dim useLoglin As Boolean
-    useLoglin = (LCase(sigmaMethod) <> "mack") And (estCount >= 2)
+    useLoglin = (LCase(sigmaMethod) <> "mack") And (posCount >= 2)
+    Dim filledLoglin As Boolean: filledLoglin = False
     If useLoglin Then
         Dim npts As Long, sx As Double, sy As Double, sxx As Double, sxy As Double
-        Dim xx As Double, yy As Double, slope As Double, intc As Double
+        Dim xx As Double, yy As Double, slope As Double, intc As Double, safeExp As Boolean
         npts = 0: sx = 0: sy = 0: sxx = 0: sxy = 0
-        For j = 1 To n - 1
-            If hasSig(j) Then
+        For j = 1 To nD - 1
+            If hasSig(j) And sig2(j) > 0 Then
                 xx = j
                 yy = Log(Sqr(sig2(j)))
                 npts = npts + 1
@@ -209,18 +224,28 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         Next j
         slope = (npts * sxy - sx * sy) / (npts * sxx - sx * sx)
         intc = (sy - slope * sx) / npts
-        For j = 1 To n - 1
+        safeExp = True
+        For j = 1 To nD - 1
             If Not hasSig(j) Then
-                sig2(j) = Exp(intc + slope * j) ^ 2
-                hasSig(j) = True
+                If (intc + slope * j) > 350 Then safeExp = False
             End If
         Next j
-    Else
-        For j = 1 To n - 1
+        If safeExp Then
+            For j = 1 To nD - 1
+                If Not hasSig(j) Then
+                    sig2(j) = Exp(intc + slope * j) ^ 2
+                    hasSig(j) = True
+                End If
+            Next j
+            filledLoglin = True
+        End If
+    End If
+    If Not filledLoglin Then
+        For j = 1 To nD - 1
             If Not hasSig(j) Then
-                If j >= 3 Then
+                If j >= 3 And sig2(j - 1) > 0 And sig2(j - 2) > 0 Then
                     sig2(j) = WorksheetMin(sig2(j - 1) ^ 2 / sig2(j - 2), sig2(j - 1), sig2(j - 2))
-                ElseIf j >= 2 Then
+                ElseIf j >= 2 And sig2(j - 1) > 0 Then
                     sig2(j) = sig2(j - 1)
                 Else
                     sig2(j) = 0#
@@ -230,20 +255,20 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         Next j
     End If
 
-    Dim ratio() As Double: ReDim ratio(1 To n - 1)
-    For j = 1 To n - 1
-        ratio(j) = sig2(j) / f(j) ^ 2
+    Dim ratio() As Double: ReDim ratio(1 To nD - 1)
+    For j = 1 To nD - 1
+        If f(j) <> 0 Then ratio(j) = sig2(j) / f(j) ^ 2 Else ratio(j) = 0#
     Next j
 
     ' --- full (completed) triangle and ultimates ---
-    Dim Full() As Double: ReDim Full(1 To n, 1 To n)
+    Dim Full() As Double: ReDim Full(1 To nA, 1 To nD)
     Dim lastObs As Long
-    For i = 1 To n
+    For i = 1 To nA
         lastObs = 0
-        For j = 1 To n
+        For j = 1 To nD
             If CObs(i, j) Then lastObs = j
         Next j
-        For j = 1 To n
+        For j = 1 To nD
             If j <= lastObs Then
                 Full(i, j) = Cum(i, j)
             Else
@@ -251,32 +276,34 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
             End If
         Next j
     Next i
-    Dim ult() As Double: ReDim ult(1 To n)
-    For i = 1 To n
-        ult(i) = Full(i, n)
+    Dim ult() As Double: ReDim ult(1 To nA)
+    For i = 1 To nA
+        ult(i) = Full(i, nD)
     Next i
 
-    ' --- newest-diagonal weights alpha(j) (uses all observed; not excluded) ---
-    Dim colsum() As Double: ReDim colsum(1 To n - 1)
-    Dim alpha() As Double: ReDim alpha(1 To n - 1)
-    For j = 1 To n - 1
+    ' --- newest-diagonal weights alpha(j); the diagonal AY in column j is nA-j+1 ---
+    Dim colsum() As Double: ReDim colsum(1 To nD - 1)
+    Dim alpha() As Double: ReDim alpha(1 To nD - 1)
+    For j = 1 To nD - 1
         den = 0#
-        For i = 1 To n
+        For i = 1 To nA
             If CObs(i, j) Then den = den + Cum(i, j)
         Next i
         colsum(j) = den
-        If den > 0 Then alpha(j) = Cum(n - j + 1, j) / den Else alpha(j) = 0#
+        If den > 0 Then alpha(j) = Cum(nA - j + 1, j) / den Else alpha(j) = 0#
     Next j
 
-    ' --- Merz-Wuthrich MSEPs (port of CL_MSEPs) ---
+    ' --- Merz-Wuthrich MSEPs (port of CL_MSEPs). Active accident years are the
+    '     last (nD-1) ones; the rest are fully developed (no reserve). ---
     Dim res3() As Double, res5() As Double, res2() As Double
-    ReDim res3(1 To n, 0 To n - 2)
-    ReDim res5(1 To n, 0 To n - 2)
-    ReDim res2(1 To n, 0 To n - 2)
+    ReDim res3(1 To nA, 0 To nD - 2)
+    ReDim res5(1 To nA, 0 To nD - 2)
+    ReDim res2(1 To nA, 0 To nD - 2)
     Dim y As Double, y2 As Double, e As Double
-    For i = 2 To n
-        L = n - i + 1
-        For s = 0 To i - 2
+    firstActive = nA - nD + 2
+    For i = firstActive To nA
+        L = nA - i + 1
+        For s = 0 To nD - L - 1
             cs = L + s
             res3(i, s) = ult(i) ^ 2 * ratio(cs) / Full(i, cs)
             y = 1#
@@ -284,7 +311,7 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
                 y = y * (1 - alpha(k))
             Next k
             e = y * ratio(cs) / Svol(cs)
-            For c2 = cs + 1 To n - 1
+            For c2 = cs + 1 To nD - 1
                 y2 = 1#
                 For k = c2 - s + 1 To c2
                     y2 = y2 * (1 - alpha(k))
@@ -298,55 +325,51 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
     Next i
 
     ' --- totals (process + estimation incl. cross-accident-year covariance) ---
-    Dim totMSEP() As Double: ReDim totMSEP(0 To n - 2)
+    Dim totMSEP() As Double: ReDim totMSEP(0 To nD - 2)
     Dim proc As Double, estt As Double, i1 As Long, mn As Long
-    For s = 0 To n - 2
+    For s = 0 To nD - 2
         proc = 0#
-        For i = 2 To n
-            If s <= i - 2 Then proc = proc + res3(i, s)
+        For i = firstActive To nA
+            proc = proc + res3(i, s)
         Next i
         estt = 0#
-        For i = 2 To n
-            For i1 = 2 To n
+        For i = firstActive To nA
+            For i1 = firstActive To nA
                 mn = i
                 If i1 < i Then mn = i1
-                If s <= mn - 2 Then estt = estt + res5(mn, s) * ult(i) * ult(i1)
+                estt = estt + res5(mn, s) * ult(i) * ult(i1)
             Next i1
         Next i
         totMSEP(s) = proc + estt
     Next s
 
     ' --- assemble result ---
-    ReDim res.AY_IBNR(1 To n)
-    ReDim res.AY_oneYearSE(1 To n)
-    ReDim res.AY_ultSE(1 To n)
-    ReDim res.patternSE(0 To n - 2)
+    ReDim res.AY_IBNR(1 To nA)
+    ReDim res.AY_oneYearSE(1 To nA)
+    ReDim res.AY_ultSE(1 To nA)
+    ReDim res.patternSE(0 To nD - 2)
     Dim msum As Double
-    For i = 1 To n
-        L = n - i + 1
-        res.AY_IBNR(i) = ult(i) - Cum(i, L)
-        If i >= 2 Then
-            res.AY_oneYearSE(i) = Sqr(res2(i, 0))
-            msum = 0#
-            For s = 0 To i - 2
-                msum = msum + res2(i, s)
-            Next s
-            res.AY_ultSE(i) = Sqr(msum)
-        Else
-            res.AY_oneYearSE(i) = 0#
-            res.AY_ultSE(i) = 0#
-        End If
+    For i = firstActive To nA
+        L = nA - i + 1
+        res.AY_IBNR(i) = ult(i) - Full(i, L)
+        res.AY_oneYearSE(i) = Sqr(res2(i, 0))
+        msum = 0#
+        For s = 0 To nD - L - 1
+            msum = msum + res2(i, s)
+        Next s
+        res.AY_ultSE(i) = Sqr(msum)
     Next i
     Dim ultMSEP As Double: ultMSEP = 0#
-    For s = 0 To n - 2
+    For s = 0 To nD - 2
         res.patternSE(s) = Sqr(totMSEP(s))
         ultMSEP = ultMSEP + totMSEP(s)
     Next s
-    res.n = n
+    res.n = nD
+    res.nA = nA
     res.oneYearSE = Sqr(totMSEP(0))
     res.ultimateSE = Sqr(ultMSEP)
     res.totalReserve = 0#
-    For i = 1 To n
+    For i = 1 To nA
         res.totalReserve = res.totalReserve + res.AY_IBNR(i)
     Next i
     res.ok = True
@@ -425,9 +448,9 @@ Public Sub MW_RunFromSetup()
     End If
     total = lastRow - 1
 
-    Dim names() As String, ns() As Long, reserves() As Double
+    Dim names() As String, ns() As Long, nAs() As Long, reserves() As Double
     Dim ultSE() As Double, oySE() As Double, ef() As Double, errs() As String, patterns() As Variant
-    ReDim names(1 To total): ReDim ns(1 To total): ReDim reserves(1 To total)
+    ReDim names(1 To total): ReDim ns(1 To total): ReDim nAs(1 To total): ReDim reserves(1 To total)
     ReDim ultSE(1 To total): ReDim oySE(1 To total): ReDim ef(1 To total)
     ReDim errs(1 To total): ReDim patterns(1 To total)
 
@@ -464,6 +487,7 @@ Public Sub MW_RunFromSetup()
                         errs(k) = res.msg
                     Else
                         ns(k) = res.n
+                        nAs(k) = res.nA
                         reserves(k) = res.totalReserve
                         ultSE(k) = res.ultimateSE
                         oySE(k) = res.oneYearSE
@@ -485,7 +509,7 @@ Public Sub MW_RunFromSetup()
     ws.Range("A1").Value = "Risk emergence (analytic Merz-Wuthrich) - batch from 'setup'"
     ws.Range("A1").Font.Bold = True
     ws.Range("A2").Value = "Aggregate = One-year SE / Ultimate SE (col F). Per-development-period emergence = EF Yr columns (each = that future period's CDR SD / Ultimate SD; squares sum to 100%)."
-    ws.Cells(3, 1).Value = "Worksheet": ws.Cells(3, 2).Value = "Size n"
+    ws.Cells(3, 1).Value = "Worksheet": ws.Cells(3, 2).Value = "AY x DP"
     ws.Cells(3, 3).Value = "Total reserve": ws.Cells(3, 4).Value = "Ultimate SE"
     ws.Cells(3, 5).Value = "One-year SE": ws.Cells(3, 6).Value = "Emergence factor"
     ws.Cells(3, 7).Value = "Status"
@@ -503,7 +527,7 @@ Public Sub MW_RunFromSetup()
         If errs(i) <> "" Then
             ws.Cells(outRow, 7).Value = "ERROR: " & errs(i)
         Else
-            ws.Cells(outRow, 2).Value = ns(i)
+            ws.Cells(outRow, 2).Value = nAs(i) & " x " & ns(i)
             ws.Cells(outRow, 3).Value = reserves(i)
             ws.Cells(outRow, 4).Value = ultSE(i)
             ws.Cells(outRow, 5).Value = oySE(i)
@@ -635,7 +659,7 @@ Public Sub MW_Report()
     ws.Range("C8").Value = "One-year CDR SE": ws.Range("D8").Value = "Ultimate Mack SE"
     ws.Range("A8:D8").Font.Bold = True
     rowOut = 9
-    For i = 1 To r.n
+    For i = 1 To r.nA
         ws.Cells(rowOut, 1).Value = i
         ws.Cells(rowOut, 2).Value = r.AY_IBNR(i)
         ws.Cells(rowOut, 3).Value = r.AY_oneYearSE(i)
@@ -669,9 +693,9 @@ End Sub
 '==============================================================================
 Public Sub MW_Sensitivity()
     Dim rng As Range, isCum As Boolean, exclFirst As Boolean, base As MWResult, alt As MWResult
-    Dim n As Long, i As Long, j As Long, ws As Worksheet, rowOut As Long
+    Dim nA As Long, nD As Long, i As Long, j As Long, ws As Worksheet, rowOut As Long
     On Error Resume Next
-    Set rng = Application.InputBox("Select the SQUARE incremental triangle value block (no labels):", "MW Sensitivity", Type:=8)
+    Set rng = Application.InputBox("Select the incremental triangle value block (no labels):", "MW Sensitivity", Type:=8)
     On Error GoTo 0
     If rng Is Nothing Then Exit Sub
     isCum = (MsgBox("Is the selected block CUMULATIVE? (No = incremental)", vbYesNo + vbQuestion, "Orientation") = vbYes)
@@ -679,11 +703,12 @@ Public Sub MW_Sensitivity()
 
     base = MW_Compute(rng, "loglinear", 0, 0, isCum, exclFirst)
     If Not base.ok Then MsgBox base.msg, vbExclamation: Exit Sub
-    n = base.n
+    nA = base.nA
+    nD = base.n
 
-    Dim colCnt() As Long: ReDim colCnt(1 To n - 1)
-    For j = 1 To n - 1
-        For i = 1 To n - j
+    Dim colCnt() As Long: ReDim colCnt(1 To nD - 1)
+    For j = 1 To nD - 1
+        For i = 1 To nA - j
             colCnt(j) = colCnt(j) + 1
         Next i
     Next j
@@ -695,9 +720,9 @@ Public Sub MW_Sensitivity()
     ws.Range("A3:F3").Font.Bold = True
     rowOut = 4
     Dim baseEF As Double: baseEF = base.oneYearSE / base.ultimateSE
-    For i = 1 To n
-        For j = 1 To n - 1
-            If i <= n - j And colCnt(j) > 1 Then
+    For i = 1 To nA
+        For j = 1 To nD - 1
+            If i <= nA - j And colCnt(j) > 1 Then
                 alt = MW_Compute(rng, "loglinear", i, j, isCum, exclFirst)
                 If alt.ok Then
                     ws.Cells(rowOut, 1).Value = i

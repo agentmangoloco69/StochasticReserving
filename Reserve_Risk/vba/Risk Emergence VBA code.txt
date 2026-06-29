@@ -47,6 +47,7 @@
 '     MW_Portfolio    - aggregate the summary into one portfolio factor (asks rho)
 '     MW_Report       - per-AY table + totals + emergence pattern for one triangle
 '     MW_Sensitivity  - leave-one-out: which cells/outliers move one-year risk
+'     MW_CumulativeToIncremental - convert a cumulative triangle to incremental
 '     MW_SelfTest     - validates against the GenIns reference numbers
 '==============================================================================
 Option Explicit
@@ -716,6 +717,63 @@ Public Sub MW_Sensitivity()
     End If
     ws.Columns("A:F").AutoFit
     ws.Activate
+End Sub
+
+'==============================================================================
+' Macro: convert a CUMULATIVE triangle to an INCREMENTAL one
+'
+' Works for any size, including more accident years than development periods
+' (more rows than columns). Differences each row over its observed cells; blank
+' cells stay blank. Offers to paste the result directly below the cumulative
+' block, or at a cell you pick.
+'==============================================================================
+Public Sub MW_CumulativeToIncremental()
+    Dim rng As Range, i As Long, j As Long, nR As Long, nC As Long, raw As Variant
+    On Error Resume Next
+    Set rng = Application.InputBox("Select the CUMULATIVE triangle value block (numbers only, no labels):", "Cumulative to incremental", Type:=8)
+    On Error GoTo 0
+    If rng Is Nothing Then Exit Sub
+    If rng.Areas.Count > 1 Then MsgBox "Please select a single contiguous block.", vbExclamation: Exit Sub
+    nR = rng.Rows.Count
+    nC = rng.Columns.Count
+    If nR * nC < 2 Then MsgBox "Select a triangle (more than one cell).", vbExclamation: Exit Sub
+    raw = rng.Value
+
+    ' Difference each row over its observed cells (blanks left empty).
+    Dim out() As Variant: ReDim out(1 To nR, 1 To nC)
+    Dim prev As Double, v As Double
+    For i = 1 To nR
+        prev = 0#
+        For j = 1 To nC
+            If Not IsEmpty(raw(i, j)) And IsNumeric(raw(i, j)) Then
+                v = CDbl(raw(i, j))
+                out(i, j) = v - prev
+                prev = v
+            End If
+        Next j
+    Next i
+
+    Dim below As Boolean
+    below = (MsgBox("Paste the incremental triangle directly below the cumulative one?" & vbCrLf & "(No = pick a target cell)", vbYesNo + vbQuestion, "Output location") = vbYes)
+
+    Dim topLeft As Range, labelCell As Range, dataTL As Range, pick As Range
+    Set topLeft = rng.Cells(1, 1)
+    If below Then
+        Set labelCell = topLeft.Offset(nR + 1, 0)
+        Set dataTL = topLeft.Offset(nR + 2, 0)
+    Else
+        On Error Resume Next
+        Set pick = Application.InputBox("Select the TOP-LEFT cell for the incremental triangle:", "Output location", Type:=8)
+        On Error GoTo 0
+        If pick Is Nothing Then Exit Sub
+        Set labelCell = pick.Cells(1, 1)
+        Set dataTL = labelCell.Offset(1, 0)
+    End If
+
+    labelCell.Value = "Incremental triangle"
+    labelCell.Font.Bold = True
+    dataTL.Resize(nR, nC).Value = out
+    MsgBox "Created an incremental " & nR & " x " & nC & " triangle.", vbInformation, "Cumulative to incremental"
 End Sub
 
 '==============================================================================

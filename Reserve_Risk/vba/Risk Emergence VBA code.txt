@@ -47,7 +47,8 @@
 '     MW_Portfolio    - aggregate the summary into one portfolio factor (asks rho)
 '     MW_Report       - per-AY table + totals + emergence pattern for one triangle
 '     MW_Sensitivity  - leave-one-out: which cells/outliers move one-year risk
-'     MW_CumulativeToIncremental - convert a cumulative triangle to incremental
+'     MW_CumulativeToIncremental      - convert one selected cumulative triangle
+'     MW_BatchCumulativeToIncremental - convert every cumulative triangle in 'setup'
 '     MW_SelfTest     - validates against the GenIns reference numbers
 '==============================================================================
 Option Explicit
@@ -720,28 +721,27 @@ Public Sub MW_Sensitivity()
 End Sub
 
 '==============================================================================
-' Macro: convert a CUMULATIVE triangle to an INCREMENTAL one
+' Cumulative -> incremental conversion
 '
-' Works for any size, including more accident years than development periods
-' (more rows than columns). Differences each row over its observed cells; blank
-' cells stay blank. Offers to paste the result directly below the cumulative
-' block, or at a cell you pick.
+' IncrementalOf: shared core. Differences each row over its observed cells
+'   (blanks left empty). Works for any size, incl. more accident years than
+'   development periods (rows > columns).
+' MW_CumulativeToIncremental: convert ONE triangle you select (prompts).
+' MW_BatchCumulativeToIncremental: convert EVERY cumulative triangle listed on
+'   the "setup" sheet at once, writing each incremental copy below its block.
 '==============================================================================
-Public Sub MW_CumulativeToIncremental()
-    Dim rng As Range, i As Long, j As Long, nR As Long, nC As Long, raw As Variant
-    On Error Resume Next
-    Set rng = Application.InputBox("Select the CUMULATIVE triangle value block (numbers only, no labels):", "Cumulative to incremental", Type:=8)
-    On Error GoTo 0
-    If rng Is Nothing Then Exit Sub
-    If rng.Areas.Count > 1 Then MsgBox "Please select a single contiguous block.", vbExclamation: Exit Sub
+Private Function IncrementalOf(rng As Range) As Variant
+    Dim nR As Long, nC As Long, i As Long, j As Long, raw As Variant
+    Dim out() As Variant, prev As Double, v As Double
     nR = rng.Rows.Count
     nC = rng.Columns.Count
-    If nR * nC < 2 Then MsgBox "Select a triangle (more than one cell).", vbExclamation: Exit Sub
+    ReDim out(1 To nR, 1 To nC)
+    If nR = 1 And nC = 1 Then
+        If IsNumeric(rng.Value) Then out(1, 1) = CDbl(rng.Value)
+        IncrementalOf = out
+        Exit Function
+    End If
     raw = rng.Value
-
-    ' Difference each row over its observed cells (blanks left empty).
-    Dim out() As Variant: ReDim out(1 To nR, 1 To nC)
-    Dim prev As Double, v As Double
     For i = 1 To nR
         prev = 0#
         For j = 1 To nC
@@ -752,6 +752,27 @@ Public Sub MW_CumulativeToIncremental()
             End If
         Next j
     Next i
+    IncrementalOf = out
+End Function
+
+' Write the incremental form of srcBlk: a bold "Incremental triangle" label at
+' labelCell and the values at dataTL.
+Private Sub WriteIncremental(srcBlk As Range, labelCell As Range, dataTL As Range)
+    labelCell.Value = "Incremental triangle"
+    labelCell.Font.Bold = True
+    dataTL.Resize(srcBlk.Rows.Count, srcBlk.Columns.Count).Value = IncrementalOf(srcBlk)
+End Sub
+
+Public Sub MW_CumulativeToIncremental()
+    Dim rng As Range, nR As Long, nC As Long
+    On Error Resume Next
+    Set rng = Application.InputBox("Select the CUMULATIVE triangle value block (numbers only, no labels):", "Cumulative to incremental", Type:=8)
+    On Error GoTo 0
+    If rng Is Nothing Then Exit Sub
+    If rng.Areas.Count > 1 Then MsgBox "Please select a single contiguous block.", vbExclamation: Exit Sub
+    nR = rng.Rows.Count
+    nC = rng.Columns.Count
+    If nR * nC < 2 Then MsgBox "Select a triangle (more than one cell).", vbExclamation: Exit Sub
 
     Dim below As Boolean
     below = (MsgBox("Paste the incremental triangle directly below the cumulative one?" & vbCrLf & "(No = pick a target cell)", vbYesNo + vbQuestion, "Output location") = vbYes)
@@ -770,10 +791,66 @@ Public Sub MW_CumulativeToIncremental()
         Set dataTL = labelCell.Offset(1, 0)
     End If
 
-    labelCell.Value = "Incremental triangle"
-    labelCell.Font.Bold = True
-    dataTL.Resize(nR, nC).Value = out
+    WriteIncremental rng, labelCell, dataTL
     MsgBox "Created an incremental " & nR & " x " & nC & " triangle.", vbInformation, "Cumulative to incremental"
+End Sub
+
+'==============================================================================
+' Macro: batch convert every CUMULATIVE triangle on the "setup" sheet
+'
+' For each setup row whose Cumulative column is Y, writes an incremental copy
+' directly below the cumulative block in that worksheet. Rows that are already
+' incremental are skipped. The 'setup' sheet itself is not modified.
+'==============================================================================
+Public Sub MW_BatchCumulativeToIncremental()
+    Dim setupWs As Worksheet, tgt As Worksheet
+    Dim lastRow As Long, r As Long, done As Long, skipped As Long, failed As Long
+    Dim wsName As String, rngStr As String, cumStr As String
+    Dim isCum As Boolean, blk As Range, topLeft As Range, nR As Long
+
+    On Error Resume Next
+    Set setupWs = ThisWorkbook.Worksheets("setup")
+    On Error GoTo 0
+    If setupWs Is Nothing Then
+        MsgBox "No worksheet named 'setup' was found.", vbExclamation, "MW_BatchCumulativeToIncremental"
+        Exit Sub
+    End If
+
+    lastRow = setupWs.Cells(setupWs.Rows.Count, 1).End(xlUp).Row
+    For r = 2 To lastRow
+        wsName = Trim(CStr(setupWs.Cells(r, 1).Value))
+        If wsName <> "" Then
+            cumStr = UCase(Trim(CStr(setupWs.Cells(r, 3).Value)))
+            isCum = (cumStr = "Y" Or cumStr = "YES" Or cumStr = "TRUE" Or cumStr = "1")
+            If Not isCum Then
+                skipped = skipped + 1
+            Else
+                rngStr = Trim(CStr(setupWs.Cells(r, 2).Value))
+                Set tgt = Nothing
+                On Error Resume Next
+                Set tgt = ThisWorkbook.Worksheets(wsName)
+                On Error GoTo 0
+                If tgt Is Nothing Then
+                    failed = failed + 1
+                Else
+                    Set blk = Nothing
+                    On Error Resume Next
+                    If rngStr = "" Then Set blk = tgt.UsedRange Else Set blk = tgt.Range(rngStr)
+                    On Error GoTo 0
+                    If blk Is Nothing Then
+                        failed = failed + 1
+                    Else
+                        Set topLeft = blk.Cells(1, 1)
+                        nR = blk.Rows.Count
+                        WriteIncremental blk, topLeft.Offset(nR + 1, 0), topLeft.Offset(nR + 2, 0)
+                        done = done + 1
+                    End If
+                End If
+            End If
+        End If
+    Next r
+
+    MsgBox "Converted " & done & " cumulative triangle(s) to incremental (written below each block)." & vbCrLf & "Skipped " & skipped & " already-incremental row(s); " & failed & " error(s).", vbInformation, "MW_BatchCumulativeToIncremental"
 End Sub
 
 '==============================================================================

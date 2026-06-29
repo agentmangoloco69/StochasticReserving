@@ -56,9 +56,12 @@ result). The first development period's dollars are kept (folded into DP2).
   = that future period's CDR SD / ultimate SD; their squares sum to 100%).
 - `MW_Portfolio` - aggregates `RiskEmergence_Summary` into one portfolio
   emergence factor using a single correlation `rho` (see below).
-- `MW_CumulativeToIncremental` - utility: converts a selected cumulative triangle
-  to incremental (any size, including more accident years than development
-  periods); optionally pastes the result directly below the cumulative block.
+- `MW_CumulativeToIncremental` - utility: converts a **selected** cumulative
+  triangle to incremental (any size, including more accident years than
+  development periods); optionally pastes the result directly below the block.
+- `MW_BatchCumulativeToIncremental` - same conversion for **every** cumulative
+  triangle listed on the `setup` sheet (Cumulative = Y rows), writing each
+  incremental copy below its block. Already-incremental rows are skipped.
 - `MW_SelfTest` - validation against the built-in GenIns reference.
 
 ## Portfolio aggregation (`MW_Portfolio`)

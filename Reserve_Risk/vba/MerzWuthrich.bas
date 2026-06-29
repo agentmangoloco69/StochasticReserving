@@ -471,6 +471,7 @@ Public Sub MW_RunFromSetup()
     Set ws = MW_FreshSheet("RiskEmergence_Summary")
     ws.Range("A1").Value = "Risk emergence (analytic Merz-Wuthrich) - batch from 'setup'"
     ws.Range("A1").Font.Bold = True
+    ws.Range("A2").Value = "Aggregate = One-year SE / Ultimate SE (col F). Per-development-period emergence = EF Yr columns (each = that future period's CDR SD / Ultimate SD; squares sum to 100%)."
     ws.Cells(3, 1).Value = "Worksheet": ws.Cells(3, 2).Value = "Size n"
     ws.Cells(3, 3).Value = "Total reserve": ws.Cells(3, 4).Value = "Ultimate SE"
     ws.Cells(3, 5).Value = "One-year SE": ws.Cells(3, 6).Value = "Emergence factor"
@@ -635,10 +636,10 @@ Public Sub MW_Report()
     ws.Cells(rowOut, 1).Resize(1, 4).Font.Bold = True
 
     rowOut = rowOut + 2
-    ws.Cells(rowOut, 1).Value = "Emergence pattern": ws.Cells(rowOut, 1).Font.Bold = True
+    ws.Cells(rowOut, 1).Value = "Risk emergence by future development period": ws.Cells(rowOut, 1).Font.Bold = True
     rowOut = rowOut + 1
-    ws.Cells(rowOut, 1).Value = "Future year": ws.Cells(rowOut, 2).Value = "Total CDR SE"
-    ws.Cells(rowOut, 3).Value = "Ratio to ultimate": ws.Cells(rowOut, 1).Resize(1, 3).Font.Bold = True
+    ws.Cells(rowOut, 1).Value = "Future period": ws.Cells(rowOut, 2).Value = "Total CDR SE"
+    ws.Cells(rowOut, 3).Value = "Emergence (CDR SD / ult SD)": ws.Cells(rowOut, 1).Resize(1, 3).Font.Bold = True
     For s = 0 To r.n - 2
         rowOut = rowOut + 1
         ws.Cells(rowOut, 1).Value = s + 1
@@ -736,14 +737,17 @@ Public Sub MW_SelfTest()
 End Sub
 
 Private Function MW_FreshSheet(nm As String) As Worksheet
+    ' Reuse the sheet if it already exists (clearing old contents), else create it.
+    ' Reusing preserves a pre-built / pre-positioned sheet rather than deleting it.
     Dim ws As Worksheet
     On Error Resume Next
     Set ws = ThisWorkbook.Worksheets(nm)
-    Application.DisplayAlerts = False
-    If Not ws Is Nothing Then ws.Delete
-    Application.DisplayAlerts = True
     On Error GoTo 0
-    Set ws = ThisWorkbook.Worksheets.Add
-    ws.Name = nm
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add
+        ws.Name = nm
+    Else
+        ws.Cells.Clear
+    End If
     Set MW_FreshSheet = ws
 End Function

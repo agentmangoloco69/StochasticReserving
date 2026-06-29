@@ -49,7 +49,11 @@ result). The first development period's dollars are kept (folded into DP2).
 - `MW_Sensitivity` - leave-one-out over every age-to-age ratio, ranked by impact
   on the one-year SE - shows which cells/outliers drive (or don't) the risk.
 - `MW_RunFromSetup` - **batch**: reads a `setup` sheet listing many triangles and
-  analyses them all, writing a comparison to `RiskEmergence_Summary`.
+  analyses them all, writing a comparison to `RiskEmergence_Summary` (pre-built in
+  the demo workbook with labels; the macro reuses it if present). Each row shows
+  the **aggregate** emergence factor (one-year / ultimate, column F) and the
+  **per-development-period** emergence in the `EF Yr1, EF Yr2, ...` columns (each
+  = that future period's CDR SD / ultimate SD; their squares sum to 100%).
 - `MW_Portfolio` - aggregates `RiskEmergence_Summary` into one portfolio
   emergence factor using a single correlation `rho` (see below).
 - `MW_SelfTest` - validation against the built-in GenIns reference.

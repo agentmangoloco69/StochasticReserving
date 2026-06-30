@@ -53,6 +53,8 @@ Public Type MWResult
     AY_oneYearSE() As Double
     AY_ultSE() As Double
     patternSE() As Double
+    devFactor() As Double   ' chain-ladder factor f_j (j = 1..n-1)
+    sigma() As Double       ' Mack's sigma_j  (j = 1..n-1)
     ok As Boolean
     msg As String
 End Type
@@ -352,6 +354,12 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         res.patternSE(s) = Sqr(totMSEP(s))
         ultMSEP = ultMSEP + totMSEP(s)
     Next s
+    ReDim res.devFactor(1 To nD - 1)
+    ReDim res.sigma(1 To nD - 1)
+    For j = 1 To nD - 1
+        res.devFactor(j) = f(j)
+        res.sigma(j) = Sqr(sig2(j))
+    Next j
     res.n = nD
     res.nA = nA
     res.oneYearSE = Sqr(totMSEP(0))
@@ -496,7 +504,7 @@ Public Sub MW_RunFromSetup()
     Set ws = MW_FreshSheet("RiskEmergence_Summary")
     ws.Range("A1").Value = "Risk emergence (analytic Merz-Wuthrich) - batch from 'setup'"
     ws.Range("A1").Font.Bold = True
-    ws.Range("A2").Value = "Aggregate = One-year SE / Ultimate SE (col F). Per-development-period emergence = EF Yr columns (each = that future period's CDR SD / Ultimate SD; squares sum to 100%)."
+    ws.Range("A2").Value = "Aggregate emergence factor (col F) = One-year SE / Ultimate SE = EF Yr1 by definition. EF Yr columns = per-development-period emergence (each = that future period's CDR SD / Ultimate SD; squares sum to 100%)."
     ws.Cells(3, 1).Value = "Worksheet": ws.Cells(3, 2).Value = "AY x DP"
     ws.Cells(3, 3).Value = "Total reserve": ws.Cells(3, 4).Value = "Ultimate SE"
     ws.Cells(3, 5).Value = "One-year SE": ws.Cells(3, 6).Value = "Emergence factor"
@@ -623,9 +631,9 @@ End Sub
 '==============================================================================
 Public Sub MW_Report()
     Dim rng As Range, isCum As Boolean, exclFirst As Boolean, r As MWResult
-    Dim ws As Worksheet, i As Long, s As Long, rowOut As Long
+    Dim ws As Worksheet, i As Long, j As Long, s As Long, rowOut As Long
     On Error Resume Next
-    Set rng = Application.InputBox("Select the SQUARE incremental triangle value block (no labels):", "MW Report", Type:=8)
+    Set rng = Application.InputBox("Select the incremental triangle value block (no labels):", "MW Report", Type:=8)
     On Error GoTo 0
     If rng Is Nothing Then Exit Sub
     isCum = (MsgBox("Is the selected block CUMULATIVE? (No = incremental)", vbYesNo + vbQuestion, "Orientation") = vbYes)
@@ -672,6 +680,19 @@ Public Sub MW_Report()
         ws.Cells(rowOut, 3).Value = r.patternSE(s) / r.ultimateSE
         ws.Cells(rowOut, 3).NumberFormat = "0.0%"
     Next s
+
+    rowOut = rowOut + 2
+    ws.Cells(rowOut, 1).Value = "Development parameters": ws.Cells(rowOut, 1).Font.Bold = True
+    rowOut = rowOut + 1
+    ws.Cells(rowOut, 1).Value = "Dev period": ws.Cells(rowOut, 2).Value = "Factor f": ws.Cells(rowOut, 3).Value = "Sigma"
+    ws.Cells(rowOut, 1).Resize(1, 3).Font.Bold = True
+    For j = 1 To r.n - 1
+        rowOut = rowOut + 1
+        ws.Cells(rowOut, 1).Value = j
+        ws.Cells(rowOut, 2).Value = r.devFactor(j)
+        ws.Cells(rowOut, 3).Value = r.sigma(j)
+    Next j
+
     ws.Columns("A:D").AutoFit
     ws.Activate
 End Sub

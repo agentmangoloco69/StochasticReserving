@@ -293,10 +293,18 @@ def merz_wuthrich(incremental: np.ndarray, weight_mask: np.ndarray | None = None
         "ratio_to_ultimate": total_cdr_se_by_year / total_ultimate_se,
     })
 
+    # Per-development-period parameters: chain-ladder factor f_j and Mack's sigma_j.
+    dev_parameters = pd.DataFrame({
+        "dev_period": np.arange(1, J0),
+        "factor_f": clq["f"],
+        "sigma": np.sqrt(clq["sigma2"]),
+    })
+
     return {
         "table": table,
         "emergence_factor": total_oneyear_se / total_ultimate_se,
         "emergence_pattern": emergence_pattern,
+        "dev_parameters": dev_parameters,
         "total_oneyear_se": total_oneyear_se,
         "total_ultimate_se": total_ultimate_se,
         "total_reserve": total_reserve,

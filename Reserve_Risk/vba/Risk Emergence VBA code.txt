@@ -5,12 +5,14 @@
 '   2. Paste EVERYTHING below this header into the code window
 '   3. File > Save As > Excel Macro-Enabled Workbook (*.xlsm)
 '   4. Run MW_SelfTest (Alt+F8) - it should report PASS
-' Handles non-square triangles (more accident years than development periods)
-' and flat/zero-variance tail columns. MW_Report also lists f_j and sigma_j.
+' Handles non-square triangles (more accident years than development periods),
+' flat/zero-variance tail columns, and zero cells (incl. a 0 top-left cell).
+' MW_RunFromSetup also writes onto each triangle sheet: row 2 = risk emergence
+' per future year, row 3 = remaining reserve at the start of that year (for
+' volume weighting); rows are inserted above the triangle if space is needed.
 ' Build a "setup" sheet and run MW_RunFromSetup; single triangle: MW_Report.
 ' Generated from MerzWuthrich.bas (kept in sync).
 ' ============================================================
-
 '==============================================================================
 ' Merz-Wuthrich (2008) one-year Claims Development Result - ANALYTIC, in VBA
 '
@@ -67,6 +69,7 @@ Public Type MWResult
     patternSE() As Double
     devFactor() As Double   ' chain-ladder factor f_j (j = 1..n-1)
     sigma() As Double       ' Mack's sigma_j  (j = 1..n-1)
+    reserveRemaining() As Double ' expected reserve still outstanding at the START of future year s (s = 1..n-1); s = 1 equals the total reserve
     ok As Boolean
     msg As String
 End Type
@@ -171,6 +174,8 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
     Next i
 
     ' --- development factors f(j), variance sig2(j), denominator Svol(j)  (j = 1..nD-1) ---
+    ' A pair is only usable if Cum(i,j) > 0: Mack's weights are C_ij, so a zero
+    ' cell carries zero weight and its age-to-age ratio is undefined (div by 0).
     Dim f() As Double: ReDim f(1 To nD - 1)
     Dim sig2() As Double: ReDim sig2(1 To nD - 1)
     Dim hasSig() As Boolean: ReDim hasSig(1 To nD - 1)
@@ -179,7 +184,7 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
     For j = 1 To nD - 1
         num = 0#: den = 0#: cnt = 0
         For i = 1 To nA
-            If CObs(i, j) And CObs(i, j + 1) And Not (i = exI And j = exJ) Then
+            If CObs(i, j) And CObs(i, j + 1) And Cum(i, j) > 0 And Not (i = exI And j = exJ) Then
                 num = num + Cum(i, j + 1)
                 den = den + Cum(i, j)
                 cnt = cnt + 1
@@ -190,7 +195,7 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         If cnt >= 2 Then
             ssq = 0#
             For i = 1 To nA
-                If CObs(i, j) And CObs(i, j + 1) And Not (i = exI And j = exJ) Then
+                If CObs(i, j) And CObs(i, j + 1) And Cum(i, j) > 0 And Not (i = exI And j = exJ) Then
                     ssq = ssq + Cum(i, j) * (Cum(i, j + 1) / Cum(i, j) - f(j)) ^ 2
                 End If
             Next i
@@ -307,19 +312,27 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         L = nA - i + 1
         For s = 0 To nD - L - 1
             cs = L + s
-            res3(i, s) = ult(i) ^ 2 * ratio(cs) / Full(i, cs)
+            If Full(i, cs) > 0 Then
+                res3(i, s) = ult(i) ^ 2 * ratio(cs) / Full(i, cs)
+            Else
+                res3(i, s) = 0#
+            End If
             y = 1#
             For k = L + 1 To L + s
                 y = y * (1 - alpha(k))
             Next k
-            e = y * ratio(cs) / Svol(cs)
+            If Svol(cs) > 0 Then
+                e = y * ratio(cs) / Svol(cs)
+            Else
+                e = 0#
+            End If
             For c2 = cs + 1 To nD - 1
                 y2 = 1#
                 For k = c2 - s + 1 To c2
                     y2 = y2 * (1 - alpha(k))
                 Next k
                 y2 = y2 * alpha(c2 - s)
-                e = e + y2 * ratio(c2) / Svol(c2)
+                If Svol(c2) > 0 Then e = e + y2 * ratio(c2) / Svol(c2)
             Next c2
             res5(i, s) = e
             res2(i, s) = res3(i, s) + e * ult(i) ^ 2
@@ -372,6 +385,21 @@ Private Function MW_Compute(rng As Range, ByVal sigmaMethod As String, ByVal exI
         res.devFactor(j) = f(j)
         res.sigma(j) = Sqr(sig2(j))
     Next j
+    ' Remaining reserve at the START of future year s: for each active accident
+    ' year the expected cumulative position after s-1 more years is
+    ' Full(i, L+s-1), so the outstanding piece is ult - Full(i, L+s-1).
+    ReDim res.reserveRemaining(1 To nD - 1)
+    Dim remRes As Double, colAt As Long
+    For s = 1 To nD - 1
+        remRes = 0#
+        For i = firstActive To nA
+            L = nA - i + 1
+            colAt = L + s - 1
+            If colAt > nD Then colAt = nD
+            remRes = remRes + (ult(i) - Full(i, colAt))
+        Next i
+        res.reserveRemaining(s) = remRes
+    Next s
     res.n = nD
     res.nA = nA
     res.oneYearSE = Sqr(totMSEP(0))
@@ -398,6 +426,7 @@ Public Function MW_EmergenceFactor(rng As Range, Optional sigmaMethod As String 
     Dim r As MWResult
     r = MW_Compute(rng, sigmaMethod, 0, 0, isCumulative, excludeFirstDev)
     If Not r.ok Then MW_EmergenceFactor = r.msg: Exit Function
+    If r.ultimateSE = 0 Then MW_EmergenceFactor = "ultimate SE is zero": Exit Function
     MW_EmergenceFactor = r.oneYearSE / r.ultimateSE
 End Function
 
@@ -434,12 +463,20 @@ End Function
 '     E: ExcludeFirstDev - "Y"/"N" (default N)
 ' Writes one row per triangle to "RiskEmergence_Summary": headline figures plus
 ' the emergence-by-year pattern. Bad rows are flagged, not fatal.
+'
+' It ALSO writes, on each triangle worksheet itself:
+'     row 2: risk emergence per future year (that year's CDR SD / ultimate SD)
+'     row 3: remaining reserve at the START of that future year (volume weights)
+' aligned with the triangle's columns (labels in column A). If the triangle sits
+' too high for that, rows are inserted above it first (the row directly above the
+' block is kept free for any header labels), and the shifted triangle address is
+' written back to the setup sheet. Rows 2-3 are overwritten on every re-run.
 '==============================================================================
 Public Sub MW_RunFromSetup()
     Dim setupWs As Worksheet, tgt As Worksheet, ws As Worksheet
     Dim lastRow As Long, r As Long, k As Long, total As Long, maxSteps As Long
     Dim wsName As String, rngStr As String, cumStr As String, sigM As String, exclStr As String
-    Dim isCum As Boolean, exclFirst As Boolean, blk As Range, res As MWResult
+    Dim blk As Range, res As MWResult
 
     On Error Resume Next
     Set setupWs = ThisWorkbook.Worksheets("setup")
@@ -458,23 +495,31 @@ Public Sub MW_RunFromSetup()
 
     Dim names() As String, ns() As Long, nAs() As Long, reserves() As Double
     Dim ultSE() As Double, oySE() As Double, ef() As Double, errs() As String, patterns() As Variant
+    Dim blks() As Range, tgts() As Worksheet, setupRows() As Long
+    Dim isCums() As Boolean, sigMs() As String, excls() As Boolean
     ReDim names(1 To total): ReDim ns(1 To total): ReDim nAs(1 To total): ReDim reserves(1 To total)
     ReDim ultSE(1 To total): ReDim oySE(1 To total): ReDim ef(1 To total)
     ReDim errs(1 To total): ReDim patterns(1 To total)
+    ReDim blks(1 To total): ReDim tgts(1 To total): ReDim setupRows(1 To total)
+    ReDim isCums(1 To total): ReDim sigMs(1 To total): ReDim excls(1 To total)
 
-    k = 0: maxSteps = 0
+    ' --- pass 1: resolve every worksheet and range up front. Range objects track
+    '     later row insertions, so triangles on a shared sheet stay in sync. ---
+    k = 0
     For r = 2 To lastRow
         wsName = Trim(CStr(setupWs.Cells(r, 1).Value))
         If wsName <> "" Then
             k = k + 1
             names(k) = wsName
+            setupRows(k) = r
             rngStr = Trim(CStr(setupWs.Cells(r, 2).Value))
             cumStr = UCase(Trim(CStr(setupWs.Cells(r, 3).Value)))
             sigM = LCase(Trim(CStr(setupWs.Cells(r, 4).Value)))
             If sigM = "" Then sigM = "loglinear"
             exclStr = UCase(Trim(CStr(setupWs.Cells(r, 5).Value)))
-            isCum = (cumStr = "Y" Or cumStr = "YES" Or cumStr = "TRUE" Or cumStr = "1")
-            exclFirst = (exclStr = "Y" Or exclStr = "YES" Or exclStr = "TRUE" Or exclStr = "1")
+            isCums(k) = (cumStr = "Y" Or cumStr = "YES" Or cumStr = "TRUE" Or cumStr = "1")
+            excls(k) = (exclStr = "Y" Or exclStr = "YES" Or exclStr = "TRUE" Or exclStr = "1")
+            sigMs(k) = sigM
 
             Set tgt = Nothing
             On Error Resume Next
@@ -490,19 +535,8 @@ Public Sub MW_RunFromSetup()
                 If blk Is Nothing Then
                     errs(k) = "invalid range '" & rngStr & "'"
                 Else
-                    res = MW_Compute(blk, sigM, 0, 0, isCum, exclFirst)
-                    If Not res.ok Then
-                        errs(k) = res.msg
-                    Else
-                        ns(k) = res.n
-                        nAs(k) = res.nA
-                        reserves(k) = res.totalReserve
-                        ultSE(k) = res.ultimateSE
-                        oySE(k) = res.oneYearSE
-                        ef(k) = res.oneYearSE / res.ultimateSE
-                        patterns(k) = res.patternSE
-                        If res.n - 1 > maxSteps Then maxSteps = res.n - 1
-                    End If
+                    Set tgts(k) = tgt
+                    Set blks(k) = blk
                 End If
             End If
         End If
@@ -512,6 +546,45 @@ Public Sub MW_RunFromSetup()
         MsgBox "No worksheet names found in 'setup'.", vbExclamation
         Exit Sub
     End If
+
+    ' --- pass 2: make room for the row-2/3 strips. The triangle must start at
+    '     row 5 or below (rows 2-3 hold the strips; the row directly above the
+    '     block stays free for header labels). Insert rows above if needed, then
+    '     pin the (possibly shifted) address back onto the setup sheet so re-runs
+    '     never pick the strips up as part of the triangle. ---
+    Dim i As Long, needRows As Long
+    For i = 1 To k
+        If errs(i) = "" Then
+            If blks(i).Row < 5 Then
+                needRows = 5 - blks(i).Row
+                tgts(i).Rows("1:" & needRows).Insert
+            End If
+            setupWs.Cells(setupRows(i), 2).Value = blks(i).Address(False, False)
+        End If
+    Next i
+
+    ' --- pass 3: compute each triangle, write its row-2/3 strips, collect summary ---
+    maxSteps = 0
+    For i = 1 To k
+        If errs(i) = "" Then
+            res = MW_Compute(blks(i), sigMs(i), 0, 0, isCums(i), excls(i))
+            If Not res.ok Then
+                errs(i) = res.msg
+            ElseIf res.ultimateSE = 0 Then
+                errs(i) = "ultimate SE is zero (degenerate triangle)"
+            Else
+                ns(i) = res.n
+                nAs(i) = res.nA
+                reserves(i) = res.totalReserve
+                ultSE(i) = res.ultimateSE
+                oySE(i) = res.oneYearSE
+                ef(i) = res.oneYearSE / res.ultimateSE
+                patterns(i) = res.patternSE
+                If res.n - 1 > maxSteps Then maxSteps = res.n - 1
+                MW_WriteEmergenceRows tgts(i), blks(i), res
+            End If
+        End If
+    Next i
 
     Set ws = MW_FreshSheet("RiskEmergence_Summary")
     ws.Range("A1").Value = "Risk emergence (analytic Merz-Wuthrich) - batch from 'setup'"
@@ -528,7 +601,7 @@ Public Sub MW_RunFromSetup()
     Next sCol
     ws.Range(ws.Cells(3, 1), ws.Cells(3, baseCol + maxSteps - 1)).Font.Bold = True
 
-    Dim i As Long, outRow As Long, p As Variant, sIdx As Long
+    Dim outRow As Long, p As Variant, sIdx As Long
     outRow = 4
     For i = 1 To k
         ws.Cells(outRow, 1).Value = names(i)
@@ -551,7 +624,34 @@ Public Sub MW_RunFromSetup()
     Next i
     ws.Columns.AutoFit
     ws.Activate
-    MsgBox "Processed " & k & " worksheet(s) listed in 'setup'.", vbInformation, "MW_RunFromSetup"
+    MsgBox "Processed " & k & " worksheet(s) listed in 'setup'." & vbCrLf & "Each triangle sheet now holds the per-year emergence (row 2) and the remaining reserve at the start of each year (row 3).", vbInformation, "MW_RunFromSetup"
+End Sub
+
+'------------------------------------------------------------------------------
+' Write the per-year strips onto a triangle worksheet (called by MW_RunFromSetup;
+' the caller guarantees the triangle block starts at row 5 or below):
+'     row 2: risk emergence per future year  (year s CDR SD / ultimate SD)
+'     row 3: remaining reserve at the START of that year (for volume weighting;
+'            year 1 = the total reserve)
+' Values sit in the triangle's own columns (year 1 under the block's first
+' column), labels in column A. Rows 2-3 are cleared first, so re-running simply
+' overwrites the previous strips.
+'------------------------------------------------------------------------------
+Private Sub MW_WriteEmergenceRows(tgt As Worksheet, blk As Range, res As MWResult)
+    Dim s As Long, c0 As Long
+    tgt.Rows("2:3").ClearContents
+    c0 = blk.Column
+    If c0 < 2 Then c0 = 2
+    tgt.Cells(2, 1).Value = "Risk emergence by future year (Yr1, Yr2, ...):"
+    tgt.Cells(2, 1).Font.Bold = True
+    tgt.Cells(3, 1).Value = "Remaining reserve at start of year:"
+    tgt.Cells(3, 1).Font.Bold = True
+    For s = 1 To res.n - 1
+        tgt.Cells(2, c0 + s - 1).Value = res.patternSE(s - 1) / res.ultimateSE
+        tgt.Cells(2, c0 + s - 1).NumberFormat = "0.0%"
+        tgt.Cells(3, c0 + s - 1).Value = res.reserveRemaining(s)
+        tgt.Cells(3, c0 + s - 1).NumberFormat = "#,##0"
+    Next s
 End Sub
 
 '==============================================================================
@@ -653,6 +753,7 @@ Public Sub MW_Report()
 
     r = MW_Compute(rng, "loglinear", 0, 0, isCum, exclFirst)
     If Not r.ok Then MsgBox r.msg, vbExclamation: Exit Sub
+    If r.ultimateSE = 0 Then MsgBox "Ultimate SE is zero (degenerate triangle) - nothing to report.", vbExclamation: Exit Sub
 
     Set ws = MW_FreshSheet("MW_Results")
     ws.Range("A1").Value = "Merz-Wuthrich one-year reserve risk"
@@ -724,6 +825,7 @@ Public Sub MW_Sensitivity()
 
     base = MW_Compute(rng, "loglinear", 0, 0, isCum, exclFirst)
     If Not base.ok Then MsgBox base.msg, vbExclamation: Exit Sub
+    If base.ultimateSE = 0 Then MsgBox "Ultimate SE is zero (degenerate triangle) - nothing to rank.", vbExclamation: Exit Sub
     nA = base.nA
     nD = base.n
 
@@ -751,7 +853,7 @@ Public Sub MW_Sensitivity()
                     ws.Cells(rowOut, 3).Value = alt.oneYearSE - base.oneYearSE
                     ws.Cells(rowOut, 4).Value = alt.ultimateSE - base.ultimateSE
                     ws.Cells(rowOut, 5).Value = alt.totalReserve - base.totalReserve
-                    ws.Cells(rowOut, 6).Value = (alt.oneYearSE / alt.ultimateSE) - baseEF
+                    If alt.ultimateSE > 0 Then ws.Cells(rowOut, 6).Value = (alt.oneYearSE / alt.ultimateSE) - baseEF
                     rowOut = rowOut + 1
                 End If
             End If

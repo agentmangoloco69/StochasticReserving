@@ -118,11 +118,13 @@ def _chain_ladder(cum: np.ndarray, weight_mask: np.ndarray | None = None,
     sigma2 = np.full(n - 1, np.nan)
     S = np.zeros(n - 1)               # denominator of f_j (sum of C[i,j] used)
 
+    # A pair is only usable if cum[i, j] > 0: Mack's weights are C_ij, so a zero
+    # cell carries zero weight and its age-to-age ratio is undefined (div by 0).
     for j in range(n - 1):
         num = den = 0.0
         rows = []
         for i in range(cum.shape[0]):
-            if observed[i, j] and observed[i, j + 1] and weight_mask[i, j] == 1:
+            if observed[i, j] and observed[i, j + 1] and cum[i, j] > 0 and weight_mask[i, j] == 1:
                 num += cum[i, j + 1]
                 den += cum[i, j]
                 rows.append(i)
@@ -172,7 +174,7 @@ def _chain_ladder(cum: np.ndarray, weight_mask: np.ndarray | None = None,
         colsum[j] = sum(cum[i, j] for i in col_rows)
         diag_i = cum.shape[0] - 1 - j           # accident year on the latest diagonal in col j
         latest[j] = cum[diag_i, j] if 0 <= diag_i < cum.shape[0] else 0.0
-    alpha = np.where(colsum > 0, latest / colsum, 0.0)
+    alpha = np.divide(latest, colsum, out=np.zeros_like(latest), where=colsum > 0)
 
     ratio = np.divide(sigma2, f**2, out=np.zeros_like(sigma2), where=f != 0)
     return {"f": f, "sigma2": sigma2, "full": full, "S": S, "alpha": alpha,
@@ -211,13 +213,14 @@ def _cl_mseps(clq: dict, I0: int, J0: int):
         reserve[ip] = ult[ip] - full[ip, L]
         for s in range(0, J0 - 1 - L):     # future calendar years for this AY
             cs = L + s                     # development column developing in year s+1
-            res3[ip, s] = ult[ip] ** 2 * ratio[cs] / full[ip, cs]
+            # zero cells carry zero Mack weight, so their variance terms drop out
+            res3[ip, s] = ult[ip] ** 2 * ratio[cs] / full[ip, cs] if full[ip, cs] > 0 else 0.0
 
             # base term
             y = 1.0
             for m in range(L + 1, L + s + 1):
                 y *= (1 - alpha[m])
-            est = y * ratio[cs] / S[cs]
+            est = y * ratio[cs] / S[cs] if S[cs] > 0 else 0.0
 
             # cross-development terms
             for c2 in range(cs + 1, J0 - 1):
@@ -225,7 +228,8 @@ def _cl_mseps(clq: dict, I0: int, J0: int):
                 for m in range(c2 - s + 1, c2 + 1):
                     y2 *= (1 - alpha[m])
                 y2 *= alpha[c2 - s]
-                est += y2 * ratio[c2] / S[c2]
+                if S[c2] > 0:
+                    est += y2 * ratio[c2] / S[c2]
 
             res5[ip, s] = est
             res2[ip, s] = res3[ip, s] + est * ult[ip] ** 2

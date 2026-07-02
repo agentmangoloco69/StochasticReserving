@@ -54,6 +54,17 @@ result). The first development period's dollars are kept (folded into DP2).
   the **aggregate** emergence factor (one-year / ultimate, column F) and the
   **per-development-period** emergence in the `EF Yr1, EF Yr2, ...` columns (each
   = that future period's CDR SD / ultimate SD; their squares sum to 100%).
+  It also writes two strips onto **each triangle worksheet itself**, aligned with
+  the triangle's columns (labels in column A):
+  - **row 2** - risk emergence per future year (that year's CDR SD / ultimate SD);
+  - **row 3** - remaining reserve at the **start** of that future year (year 1 =
+    the total reserve), i.e. the volume weights for combining emergence factors
+    across triangles later.
+  If the triangle starts above row 5, rows are inserted above it so the strips
+  never overlap it (the row directly above the block is left free for header
+  labels), and the shifted triangle address is written back to the `setup` sheet's
+  Range column so re-runs stay pointed at the right block. Rows 2-3 are cleared
+  and rewritten on every re-run.
 - `MW_Portfolio` - aggregates `RiskEmergence_Summary` into one portfolio
   emergence factor using a single correlation `rho` (see below).
 - `MW_CumulativeToIncremental` - utility: converts a **selected** cumulative
@@ -106,7 +117,10 @@ the Status column rather than stopping the batch.
 - Input is an annual triangle, **square or with more accident years than
   development periods** (e.g. 22 accident years x 20 development periods);
   aggregate quarterly data to annual first. Flat / fully-developed tail columns
-  (zero variance) and large values are handled.
+  (zero variance), large values, and **zero cells** (including a zero top-left
+  cell or a whole zero column) are handled: a zero cumulative cell carries zero
+  Mack weight, so its age-to-age ratio is simply excluded - same treatment in the
+  Python engine.
 - The numerical algorithm was validated to match the Python/R reference exactly
   (square, non-square, and flat-tail cases) via a line-for-line transcription;
   `MW_SelfTest` re-checks it inside Excel.
